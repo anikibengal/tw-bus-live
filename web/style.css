@@ -1,16 +1,21 @@
+/* 配色：珊瑚 #FF8461、紅 #E54744、黃 #FFD253、深棕黑 #251615、白 #FFFFFF（使用者 2026-10-05 給的參考稿）。
+   只換顏色，版面與字型不動。文字用的顏色都對過對比（小字 4.5 以上）：珊瑚與紅直接當淺底上的小字不夠深，所以另有 --accent-ink。 */
 :root {
-  --bg: #0b1120;
-  --surface: #121a2c;
-  --surface-2: #18223a;
-  --line: #24304a;
-  --ink: #e6ebf5;
-  --ink-2: #a3aec4;
-  --ink-3: #6f7a91;
-  --accent: #f5a524;
-  --good: #4ade80;
-  --warn: #fbbf24;
-  --bad: #f87171;
-  --chip-ink: #0b1120;
+  --bg: #1a0f0e;
+  --surface: #251615;
+  --surface-2: #34221f;
+  --line: #4a3431;
+  --ink: #fff6f2;
+  --ink-2: #d8c4be;
+  --ink-3: #a8928c;
+  --accent: #ff8461;               /* 填色與強調：最快到的那一列外框、現在出門 */
+  --accent-2: #e54744;             /* 漸層的另一端 */
+  --accent-ink: #ff8461;           /* 強調色的文字 */
+  --good: #ff8461;                 /* 快到了（3 分鐘內、到站） */
+  --warn: #ffd253;                 /* 最早幾分、資料較舊、前方低速 */
+  --bad: #ff6b66;                  /* 連不上、前方停滯 */
+  --chip-ink: #251615;             /* 路線牌與珊瑚底上的字 */
+  --nav-bg: #251615; --nav-ink: #b9a6a1; --nav-on: #ff8461;     /* 底下的分頁列：深底，選中的是珊瑚色 */
   --radius: 12px;
   --font: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
   color-scheme: dark;
@@ -18,12 +23,12 @@
 /* 白天在戶外看：跟著系統的淺色模式，對比比較夠 */
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f3f5f9; --surface: #ffffff; --surface-2: #eef1f6; --line: #d9dfe9;
-    --ink: #111827; --ink-2: #475569; --ink-3: #64748b;
-    --accent: #b45309; --good: #15803d; --warn: #b45309; --bad: #b91c1c;
+    --bg: #f2efed; --surface: #ffffff; --surface-2: #f6f1ee; --line: #e6deda;
+    --ink: #251615; --ink-2: #6b5a57; --ink-3: #766562;
+    --accent-ink: #c73835; --good: #c73835; --warn: #8a5a00; --bad: #a61e1a;
     color-scheme: light;
   }
-  .night-tiles { filter: none !important; }
+  .night-tiles { filter: grayscale(.85) contrast(.96) brightness(1.03) !important; }      /* 淺色：底圖接近灰階，路線與車的顏色才跳得出來 */
 }
 
 * { box-sizing: border-box; }
@@ -51,16 +56,16 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #view-wait { overflow-anchor: none; }
 .wrap { max-width: 860px; margin: 0 auto; padding: 12px 12px 28px; }
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
-.tabs button { background: none; border: 0; color: var(--ink-3); padding: 7px 2px 8px; font-size: 11.5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; white-space: nowrap; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--nav-bg); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+.tabs button { background: none; border: 0; color: var(--nav-ink); padding: 7px 2px 8px; font-size: 11.5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; white-space: nowrap; }
 .tabs button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.tabs button[aria-selected="true"] { color: var(--accent); font-weight: 700; }
+.tabs button[aria-selected="true"] { color: var(--nav-on); font-weight: 700; }
 @media (min-width: 701px) {
   .tabs { order: -1; display: flex; gap: 4px; padding: 0 12px; border-top: 0; border-bottom: 1px solid var(--line); }
   .top { order: -2; }
   .tabs button { flex-direction: row; gap: 6px; font-size: 13.5px; padding: 9px 14px; min-height: 0; border-bottom: 2px solid transparent; }
   .tabs button svg { width: 18px; height: 18px; }
-  .tabs button[aria-selected="true"] { border-bottom-color: var(--accent); }
+  .tabs button[aria-selected="true"] { border-bottom-color: var(--nav-on); }
 }
 
 /* ---------- 共用小元件 ---------- */
@@ -75,7 +80,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .hint { color: var(--ink-3); font-size: 12px; margin: 0; }
 .vchip { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; color: var(--chip-ink); background: var(--c); white-space: nowrap; }
 .src { font-size: 10.5px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
-.src.official { color: var(--good); }
+.src.official { background: none; color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
 .src.sched { background: none; border: 1px solid var(--line); }
 .early { font-size: 11.5px; font-weight: 600; color: var(--warn); margin-left: 6px; white-space: nowrap; }
 select, input[type="search"] { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; min-height: 36px; }
@@ -124,7 +129,9 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .tempbar .btn { min-height: 44px; border-radius: 10px; font-size: 13px; }
 /* 出門提醒：這一塊高度固定、永遠在，下面的列才不會上下跳 */
 .leave { display: flex; flex-direction: column; justify-content: center; width: 100%; min-height: 60px; margin: 0 0 10px; padding: 8px 14px; border: 0; border-radius: 12px; background: var(--surface-2); font-size: 16px; font-weight: 700; text-align: left; }
-.leave.go { box-shadow: inset 0 0 0 2px var(--good); color: var(--good); }
+.leave.go { background: linear-gradient(120deg, var(--accent), var(--accent-2)); color: var(--chip-ink); }
+.leave.go small { color: var(--chip-ink); opacity: .82; }
+.leave.go small .road { color: inherit; font-weight: 700; }
 .leave.none { color: var(--ink-2); }
 .leave small { display: block; font-weight: 400; font-size: 12px; color: var(--ink-2); }
 .leave small .link { padding: 0; font-size: 12.5px; }
@@ -153,7 +160,7 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .posmenu small { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
 #board { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .rt { background: var(--surface); border: 2px solid var(--line); border-radius: 14px; overflow: hidden; }
-.rt.hot { border-color: var(--ink); }                       /* 最快到的那一列：外框加深（列的順序不隨到站時間變，不然手指要按的那一列會跑掉） */
+.rt.hot { border-color: var(--accent); }                       /* 最快到的那一列：外框加深（列的順序不隨到站時間變，不然手指要按的那一列會跑掉） */
 .rt-main { width: 100%; border: 0; background: transparent; cursor: pointer; text-align: left; padding: 10px 12px; min-height: 84px; display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .rt-id { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .rt-to { font-size: 12.5px; font-weight: 700; line-height: 1.25; }
@@ -173,7 +180,7 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .sec-r b { font-size: 13px; }
 /* 「選路線」面板：從底下升上來，蓋住整個畫面（含底下的分頁列）；只列現在這個候車位置的路線 */
 .picker { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; justify-content: flex-end; }
-.picker-bg { position: absolute; inset: 0; border: 0; background: rgba(4, 8, 18, .55); cursor: pointer; }
+.picker-bg { position: absolute; inset: 0; border: 0; background: rgba(37, 22, 21, .55); cursor: pointer; }
 .picker-box { position: relative; width: 100%; max-width: 560px; height: 80%; margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border-radius: 18px 18px 0 0; box-shadow: 0 -8px 28px rgba(0, 0, 0, .4); padding-bottom: env(safe-area-inset-bottom); }
 .picker-h { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--line); }
 .picker-h > div { min-width: 0; }
@@ -255,7 +262,7 @@ input[type="search"] { flex: 1; min-width: 140px; }
 #view-map { position: relative; overflow: hidden; --sheet-h: 172px; }
 #view-map.sheet-open { --sheet-h: 56%; }
 #map { position: absolute; inset: 0; background: var(--bg); }
-.night-tiles { filter: invert(1) hue-rotate(200deg) brightness(.78) contrast(.92) saturate(.35); }
+.night-tiles { filter: invert(1) grayscale(.9) sepia(.28) brightness(.8) contrast(.92); }      /* 深色：反相後去色、帶一點暖，和深棕底一致 */
 .leaflet-container { font-family: var(--font); }
 .leaflet-bar a, .leaflet-bar a:hover { background: var(--surface); color: var(--ink); border-bottom-color: var(--line); }      /* 放大縮小鈕跟著深淺色（深色時不要一塊亮白） */
 .leaflet-bar { border-color: var(--line) !important; }
@@ -265,9 +272,9 @@ input[type="search"] { flex: 1; min-width: 140px; }
   position: absolute; transform: translate(-50%, -50%); cursor: pointer;
   display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
   font: 700 12.5px/1 var(--font); padding: 4px 7px 4px 5px; border-radius: 999px;
-  background: var(--c); color: #0b1120; border: 2px solid #0b1120; box-shadow: 0 1px 6px rgba(0, 0, 0, .55);
+  background: var(--c); color: #251615; border: 2px solid #251615; box-shadow: 0 1px 6px rgba(0, 0, 0, .55);
 }
-.busm.d1 { background: #0b1120; color: var(--c); border-color: var(--c); }     /* 返程：空心 */
+.busm.d1 { background: #251615; color: var(--c); border-color: var(--c); }     /* 返程：空心 */
 .busm .arrow { display: inline-flex; width: 12px; height: 12px; }
 .busm .arrow svg { width: 12px; height: 12px; fill: currentColor; }
 /* 平常只有箭頭＋幾分後到這個地點；選中才展開成路線名與車牌（車擠在一起時長條會疊成一團） */
@@ -338,7 +345,7 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .stop.mine .sname b { font-weight: 800; }
 .stop.mine .rail .dot { border-color: var(--ink); background: var(--ink); }
 .stop.can-ride { cursor: pointer; }                          /* 這個地點之後的站：點一下看從這裡搭過去的車程 */
-.ride { display: flex; align-items: center; gap: 5px; margin-top: 1px; font-size: 12.5px; font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ride { display: flex; align-items: center; gap: 5px; margin-top: 1px; font-size: 12.5px; font-weight: 700; color: var(--accent-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rail { position: relative; align-self: stretch; }
 .rail::before { content: ""; position: absolute; left: 9px; top: -7px; bottom: -7px; width: 4px; background: var(--line); border-radius: 2px; }
 .rail .dot { position: absolute; left: 4px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; background: var(--bg); border: 3px solid var(--ink-2); }

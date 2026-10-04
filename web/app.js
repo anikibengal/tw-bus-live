@@ -23,8 +23,11 @@ function startApp() {
   // 即時資料來源：台北市與新北市放在同一個主機的不同資料夾，格式相同、編號互不重複
   const SOURCES = A.sources || { tpe: { name: "台北市", base: "https://tcgbusfs.blob.core.windows.net/blobbus/" } };
   const BUS_MS = 10e3, ETA_MS = 20e3;
-  const PALETTE = { "307": "#F5A524", "307西藏三民": "#38BDF8", "265區": "#4ADE80" };
-  const EXTRA = ["#A78BFA", "#F472B6", "#2DD4BF", "#FB7185", "#FACC15", "#60A5FA", "#F97316", "#E879F9", "#A3E635", "#94A3B8"];
+  // 路線的顏色。紅色留給「快到了／現在出門」，路線不用紅。內建三條：黃、珊瑚、天藍（珊瑚和紅在地圖上太像，所以第三條用冷色）。
+  // 其他路線照 EXTRA 的順序挑：這十三個顏色是算過的（CIEDE2000：前八個彼此差 22 以上、前十個 19 以上、十三個 15 以上；
+  // 牌子上的深色字對比都在 5 以上）。分得清楚的顏色就十個左右，再多只能靠路線號碼分。
+  const PALETTE = { "307": "#FFD253", "307西藏三民": "#FF8461", "265區": "#47B4EB" };
+  const EXTRA = ["#DD47EB", "#47EBB4", "#E0A3BD", "#B4EB47", "#7881E2", "#91EBF3", "#E0BDA3", "#C29AEA", "#EB9947", "#E0E0A3"];
   const TABS = ["wait", "map", "find", "route", "marey"];
   const WALK_M_PER_MIN = 75, WALK_DETOUR = 1.3;        // 步行 4.5 km/h；直線距離乘 1.3 當實際路程
   const NEARBY_M = 500, NEARBY_N = 8;                  // 「附近的站牌」列出多遠以內、最多幾個站名
@@ -61,7 +64,17 @@ function startApp() {
   // ---------------------------------------------------------------- 資料整理（路線可以在執行中加進來）
   const V = [], byKey = new Map();
   const colorOf = {}, color = {};
-  let xi = 0;
+  let watchReady = false;             // 關注清單讀進來了沒（內建路線在那之前就要上色）
+  /** 一條路線（一個顯示名稱）的顏色：內建的固定；其他的挑同一個站別的路線還沒用過的（見 core.pickColor）。 */
+  function routeColor(v) {
+    if (PALETTE[v.display]) return PALETTE[v.display];
+    const u = C.unitKey(v), near = new Map();
+    if (watchReady) for (const us of Object.values(watch)) {
+      if (!us.includes(u)) continue;
+      for (const o of us) for (const w of unitsOf.get(o) || []) if (w.display !== v.display && colorOf[w.display]) near.set(w.display, colorOf[w.display]);
+    }
+    return C.pickColor(EXTRA, [...near.values()], Object.values(colorOf));
+  }
   const tracker = C.createTracker([]);
   let map = null;                     // 地圖分頁第一次打開才建
   const families = [];
@@ -90,7 +103,7 @@ function startApp() {
     const vs = list.filter((v) => !byKey.has(v.key)), fams = new Set();
     for (const v of vs) {
       V.push(v); byKey.set(v.key, v);
-      if (!colorOf[v.display]) colorOf[v.display] = PALETTE[v.display] || EXTRA[xi++ % EXTRA.length];
+      if (!colorOf[v.display]) colorOf[v.display] = routeColor(v);
       color[v.key] = colorOf[v.display];
       const u = C.unitKey(v);
       if (!unitsOf.has(u)) unitsOf.set(u, []);
@@ -171,6 +184,7 @@ function startApp() {
       watch["cfg:" + p.name] = us;
     }
   }
+  watchReady = true;
   const saveWatch = () => { ls.set("bus:watch", watch); watchRev++; };
   let posSel = ls.get("bus:pos", {});                   // 地點 → 上次看的候車位置（那個位置第一根站牌的編號）
   if (!posSel || typeof posSel !== "object" || Array.isArray(posSel)) posSel = {};
@@ -847,11 +861,15 @@ function startApp() {
   }
   /** 路線與站牌的圖層：地圖建好時、之後每加一條路線時補上。 */
   function addMapLayers() {
-    for (const v of V) if (!lines[v.key]) lines[v.key] = L.polyline(v.shape.map(ll), { color: color[v.key], weight: 4, opacity: 0.7, interactive: false });
+    // 每條路線兩層：底下一圈深色的邊（放在自己的圖層，壓在所有路線顏色的下面），上面才是路線的顏色。
+    // 淺色地圖上，黃、萊姆這類淺色的線沒有這圈邊幾乎看不見（黃對淺灰底的對比只有 1.15）
+    for (const v of V) if (!lines[v.key]) lines[v.key] = L.layerGroup([
+      L.polyline(v.shape.map(ll), { pane: "casing", color: "#251615", weight: 7, opacity: 0.3, interactive: false }),
+      L.polyline(v.shape.map(ll), { color: color[v.key], weight: 4, opacity: 0.9, interactive: false })]);
     for (const st of stations.values()) {
       if (stMarkers.has(st.station)) continue;
       // 看得見的小圓不接收點擊；外面套一個看不見的大圓當點擊範圍（手指好點）
-      const dot = L.circleMarker([st.lat, st.lon], { radius: 4.5, weight: 2, fillOpacity: 1, interactive: false, color: "#0b1120", fillColor: "#ffffff", className: "stop-dot" });
+      const dot = L.circleMarker([st.lat, st.lon], { radius: 4.5, weight: 2, fillOpacity: 1, interactive: false, color: "#251615", fillColor: "#ffffff", className: "stop-dot" });
       const hit = L.circleMarker([st.lat, st.lon], { radius: 13, stroke: false, fillOpacity: 0 });
       hit.bindPopup("", { className: "stop-pop", minWidth: Math.min(300, window.innerWidth - 56), maxWidth: 340,   // 夠寬，每台車才排得成一列
         autoPanPaddingTopLeft: [12, 12], autoPanPaddingBottomRight: [12, NARROW ? 184 : 12] });                    // 手機：小視窗避開底下的清單
@@ -875,6 +893,8 @@ function startApp() {
     if (map) { map.invalidateSize({ pan: false }); return; }
     map = L.map("map", { zoomControl: false });
     L.control.zoom({ position: "topright" }).addTo(map);
+    const casing = map.createPane("casing");                    // 路線的深色邊：在底圖之上、所有路線與標記之下
+    casing.style.zIndex = 390; casing.style.pointerEvents = "none";
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19, className: "night-tiles", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> 貢獻者',
     }).addTo(map);

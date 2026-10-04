@@ -3,8 +3,8 @@
   "short_name": "公車",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#0b1120",
-  "theme_color": "#121a2c",
+  "background_color": "#251615",
+  "theme_color": "#251615",
   "lang": "zh-Hant-TW",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
