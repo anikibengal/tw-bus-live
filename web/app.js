@@ -455,22 +455,23 @@ function startApp() {
       return true;
     });
   }
-  function srcTag(source) {
-    if (source === "官方") return `<span class="src official" title="官方預估到站">官方</span>`;
-    if (source === "官方・未發車") return `<span class="src official" title="官方預估到站；這班車還沒開始跑這個方向（尚未發車，或還在對向那一趟）">官方</span>`;
-    if (source.startsWith("官方・")) return `<span class="src official" title="官方預估到站；這台車目前沒有定位資料">官方</span>`;
-    if (source === "班表") return `<span class="src sched" title="起點還沒發車，依班表推算">班表</span>`;
-    if (source === "班距") return `<span class="src sched" title="這條路線只公布班距：下一班最晚在班距上限內從起點發車，再加上開到這站的時間">班距</span>`;
+  /** 這個時間怎麼來的（滑鼠移上去才看得到；畫面上不放標籤，自己估的只在時間前面寫「約」）。 */
+  function srcTitle(source) {
+    if (!source) return "";
+    if (source === "官方") return "官方預估到站";
+    if (source === "官方・未發車") return "官方預估到站；這班車還沒開始跑這個方向（尚未發車，或還在對向那一趟）";
+    if (source.startsWith("官方・")) return "官方預估到站；這台車目前沒有定位資料";
+    if (source === "班表") return "起點還沒發車，依班表估算";
+    if (source === "班距") return "這條路線只公布班距：下一班最晚在班距上限內從起點發車，再加上開到這站的時間";
     const detail = { 前車: "前面幾台車跑過這一段的時間（平均）", 均速: "這台車近 5 分鐘均速", 預設: "預設車速" };
-    const t = source.replace("官方→", "以官方預估為起點，接續用").replace(/前車|均速|預設/g, (m) => detail[m]);
-    return `<span class="src" title="${esc(t)}">推算</span>`;
+    return "估算：" + source.replace("官方→", "以官方預估為起點，接續用").replace(/前車|均速|預設/g, (m) => detail[m]);
   }
   function etaText(a, now) {
     if (a.upper) return { text: `≤ ${Math.max(1, Math.round((a.ms - now) / 60e3))} 分`, soon: false };
     const s = (a.ms - now) / 1000;
     if (s < 60) return { text: "即將到站", soon: true };
-    const m = Math.round(s / 60);
-    return { text: m <= 90 ? `${m} 分` : fmt(a.ms), soon: m <= 3 };
+    const m = Math.round(s / 60), about = a.source && C.isApprox(a.source) ? "約 " : "";      // 自己估的寫「約」；官方報的照寫
+    return { text: about + (m <= 90 ? `${m} 分` : fmt(a.ms)), soon: m <= 3 };
   }
   const who = (a) => (a.bus ? a.bus : a.source === "班表" || a.source === "官方・未發車" ? "未發車" : a.source === "班距" ? "依班距" : "未定位");
   /** 「最早可能」到站時刻：校準表依這班車的路線與現在是白天或夜間挑。 */
@@ -495,8 +496,8 @@ function startApp() {
     const e = etaText(a, now), early = earliestText(a, now), where = whereText(a);
     const age = a.info && a.info.ageS > 45 ? `<span class="age">定位 ${Math.round(a.info.ageS)} 秒前</span>` : "";
     return `<li class="arow${a.info && a.info.ageS > 90 ? " stale" : ""}"${a.bus ? ` data-bus="${esc(a.bus)}" tabindex="0" role="button" title="在地圖上看這台車"` : ""}>` +
-      `<div class="eta${e.soon ? " soon" : ""}">${e.text}${early ? `<span class="early" title="依驗證資料，${CAL_COVER}的情況車不會比這更早到">${early}</span>` : ""}</div>` +
-      `<div class="whom"><span class="vchip" style="--c:${color[a.v.key]}">${esc(a.v.display)}</span><span class="plate">${esc(who(a))}</span>${srcTag(a.source)}</div>` +
+      `<div class="eta${e.soon ? " soon" : ""}" title="${esc(srcTitle(a.source))}">${e.text}${early ? `<span class="early" title="依驗證資料，${CAL_COVER}的情況車不會比這更早到">${early}</span>` : ""}</div>` +
+      `<div class="whom"><span class="vchip" style="--c:${color[a.v.key]}">${esc(a.v.display)}</span><span class="plate">${esc(who(a))}</span></div>` +
       `<div class="sub">${a.upper ? "" : fmt(a.ms)}${where ? `<span>${where}</span>` : ""}${age}</div></li>`;
   }
 
@@ -509,15 +510,14 @@ function startApp() {
     if (main.length > 5) cls = (cls ? cls + " " : "") + "long";
     return `<span class="badge${cls ? " " + cls : ""}${col ? "" : " plain"}"${col ? ` style="--c:${col}"` : ""}><b>${esc(main)}</b>${suffix ? `<small>${esc(suffix)}</small>` : ""}</span>`;
   }
-  const srcWord = (source) => (source === "班表" || source === "班距" ? source : source.startsWith("官方") && !source.startsWith("官方→") ? "官方" : "推算");
   /** 大數字：幾分後到。 */
   function bigOf(a, now) {
     if (!a) return { num: "—", unit: "", soon: false };
     const s = (a.ms - now) / 1000;
     if (a.upper) return { num: "≤" + Math.max(1, Math.round(s / 60)), unit: "分", soon: false };
     if (s < 60) return { num: "到站", unit: "", soon: true };
-    const m = Math.round(s / 60);
-    return m <= 90 ? { num: String(m), unit: "分", soon: m <= 3 } : { num: fmt(a.ms), unit: "", soon: false };
+    const m = Math.round(s / 60), about = C.isApprox(a.source);
+    return m <= 90 ? { num: String(m), unit: "分", soon: m <= 3, about } : { num: fmt(a.ms), unit: "", soon: false, about };
   }
   /** 沒有車時說明原因（官方的代碼：尚未發車、末班已過…）。 */
   function idleText(it) {
@@ -566,11 +566,11 @@ function startApp() {
     const a = r.arr[0], big = bigOf(a, now), early = a ? earliestText(a, now) : "";
     const later = r.arr.slice(1).filter((x) => !x.upper && x.ms - now <= 90 * 60e3).slice(0, 2).map((x) => Math.max(1, Math.round((x.ms - now) / 60e3)));
     const open = state.openRow === r.it.unit;
-    const src = a ? (a.source === "官方・未發車" ? "未發車" : srcWord(a.source) === "官方" ? "" : srcWord(a.source)) : "";
+    const src = !a ? "" : a.source === "官方・未發車" || a.source === "班表" ? "未發車" : a.source === "班距" ? "依班距" : "";
     const sub = !a ? idleText(r.it) : [early, src].filter(Boolean).join("・");
     return `<article class="rt${hot ? " hot" : ""}"><button type="button" class="rt-main" data-row="${esc(r.it.unit)}" aria-expanded="${open}">` +
       `<span class="rt-id">${badgeHTML(r.label, r.col)}<span class="rt-to">往 ${esc(r.toward)}</span></span>` +
-      `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}">${big.num}${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${esc(sub)}</span></span>` +
+      `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}"${a ? ` title="${esc(srcTitle(a.source))}"` : ""}>${big.about ? "<small>約</small>" : ""}${big.num}${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${esc(sub)}</span></span>` +
       `<span class="rt-later"><small>再來</small><b>${later.length ? later.join("、") + " 分" : "—"}</b></span></button>` +
       (open ? rowDetailHTML(r, now) : "") + `</article>`;
   }
@@ -1115,7 +1115,7 @@ function startApp() {
       const stop = v.stops[x.si], a = { ms: x.ms, source: x.source, v }, early = earliestText(a, now);
       return `<li><button type="button" class="bc-stop" data-station="${esc(stKey(stop))}">` +
         `<span class="bc-name">${esc(stop.name)}${x.rank > 1 ? `<small>前面還有 ${x.rank - 1} 班</small>` : ""}</span>` +
-        `<span class="bc-eta"><b>${etaText(a, now).text}</b>${early ? `<small>${early}</small>` : ""}</span>${srcTag(x.source)}</button></li>`;
+        `<span class="bc-eta" title="${esc(srcTitle(x.source))}"><b>${etaText(a, now).text}</b>${early ? `<small>${early}</small>` : ""}</span></button></li>`;
     });
     return `<div class="bc-h"><div><span class="vchip" style="--c:${color[v.key]}">${esc(v.display)}</span><b>${esc(id)}</b>` +
       `<span class="bc-dir">往${esc(v.toward)}</span></div><button type="button" class="bc-x" aria-label="回到清單" title="回到清單">×</button></div>` +
@@ -1179,8 +1179,8 @@ function startApp() {
   }
   function stripArrival(a, now, cls) {
     const e = etaText(a, now), early = earliestText(a, now);
-    return `<div class="arr ${cls}"><div class="eta${e.soon ? " soon" : ""}">${e.text}${early ? `<span class="early">${early}</span>` : ""}</div>` +
-      `<div class="meta"><span class="vchip" style="--c:${color[a.v.key]}">${esc(a.v.display)}</span><span>${esc(who(a))}</span>${a.upper ? "" : `<span>${fmt(a.ms)}</span>`}${srcTag(a.source)}</div></div>`;
+    return `<div class="arr ${cls}"><div class="eta${e.soon ? " soon" : ""}" title="${esc(srcTitle(a.source))}">${e.text}${early ? `<span class="early">${early}</span>` : ""}</div>` +
+      `<div class="meta"><span class="vchip" style="--c:${color[a.v.key]}">${esc(a.v.display)}</span><span>${esc(who(a))}</span>${a.upper ? "" : `<span>${fmt(a.ms)}</span>`}</div></div>`;
   }
   function renderStrip() {
     const g = groupOf(state.group), now = nowMs();

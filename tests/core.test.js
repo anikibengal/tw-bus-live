@@ -1268,3 +1268,17 @@ test("共用路段的比對：站牌編號一邊是字串、一邊是數字也�
   assert.deepEqual(C.sharedSegments(A, B).map((s) => [s.v0, s.v1]), [[0, 1], [1, 2]]);
 });
 
+// ---------------------------------------------------------------- 畫面上寫不寫「約」
+test("自己估的時刻寫「約」：官方報的不寫（含未發車、未定位），依班距的寫的是「≤」也不寫", () => {
+  const approx = ["前車", "均速", "預設", "官方→前車", "官方→均速", "官方→預設", "班表"];
+  const exact = ["官方", "官方・未發車", "官方・未定位", "班距"];
+  assert.deepEqual(approx.map(C.isApprox), approx.map(() => true));
+  assert.deepEqual(exact.map(C.isApprox), exact.map(() => false));
+  // 核心實際會產生的來源都在上面兩組裡：用一個有官方預估、有前車、有班表的情境把來源收一遍
+  const tr = trackerWith([["09:20", [fix("A", 4, "09:20", { route: "901" }), fix("B", 1, "09:20", { route: "901" })]]], [TT]);
+  const r = C.routeArrivals(tr, "901", etaOf("09:20", [[5, 180], [2, 200, "1"]], "91"), T("09:20"));
+  const seen = new Set(r.perStop.flat().map((a) => a.source));
+  for (const s of seen) assert.ok(approx.includes(s) || exact.includes(s), `沒歸類的來源：${s}`);
+  assert.ok(seen.has("官方") && seen.has("班表") && [...seen].some((s) => s.startsWith("官方→")), [...seen].join("、"));
+});
+
