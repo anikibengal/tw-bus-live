@@ -259,6 +259,23 @@ class PublishedScheduleTest(unittest.TestCase):
         self.assertFalse([v["key"] for v in freq if v["schedule"].get("nominal")], "內建路線（TDX 的分時段班距表）不標 nominal")
 
 
+class PublishedAssetsTest(unittest.TestCase):
+    """跟著網站一起公開的字型：檔案要在、樣式表要指到它、授權全文要附上（SIL OFL 要求隨字型附授權）。"""
+
+    def test_font_file_is_bundled_with_its_licence(self):
+        web = Path(__file__).resolve().parent.parent / "web"
+        font = web / "fonts" / "urbanist-latin.woff2"
+        self.assertTrue(font.exists(), "字型檔要放在自己的網站上，不連第三方")
+        data = font.read_bytes()
+        self.assertEqual(data[:4], b"wOF2")
+        self.assertGreater(len(data), 10_000)
+        self.assertIn("SIL Open Font License, Version 1.1", (web / "fonts" / "OFL.txt").read_text(encoding="utf-8"))
+        css = (web / "style.css").read_text(encoding="utf-8")
+        self.assertIn('url("fonts/urbanist-latin.woff2")', css)
+        self.assertNotIn("fonts.googleapis.com", css + (web / "index.html").read_text(encoding="utf-8"), "不從 Google 載入字型")
+        self.assertIn('href="fonts/urbanist-latin.woff2"', (web / "index.html").read_text(encoding="utf-8"), "預先載入，數字才不會先用別的字型閃一下")
+
+
 # ---------------------------------------------------------------- 全市索引（台北市＋新北市的開放資料靜態檔）
 def _route(rid, pid, name="測", sub=None, **kw):
     base = {"Id": rid, "pathAttributeId": pid, "nameZh": name, "pathAttributeName": sub or name,

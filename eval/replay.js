@@ -25,6 +25,9 @@ for (const kv of (opt("set", "") || "").split(",").filter(Boolean)) {
   C.P[k] = v === "true" ? true : v === "false" ? false : Number.isFinite(Number(v)) ? Number(v) : v;
 }
 const EVERY_S = Number(opt("every", "60"));          // 每隔幾秒（資料時間）做一次預測
+// --from HH:MM：模擬這個時刻才打開頁面（之前的快照不餵給追蹤器）；--predict-min N：只評估打開後 N 分鐘內做的預測。
+// 兩個一起用來看「剛打開、還沒累積段速」時準不準。實際到站仍用整段記錄的軌跡算。
+const FROM = opt("from", ""), PREDICT_MIN = Number(opt("predict-min", "0"));
 const ROUTE = opt("route", "307");
 if (!dayDir) { console.error("用法：node eval/replay.js logs/<日期-標籤>"); process.exit(1); }
 
@@ -37,6 +40,26 @@ if (APP) {
 } else D = JSON.parse(fs.readFileSync(path.join(ROOT, "data", "routes", `Taipei-${ROUTE}.json`), "utf8"));
 const EVAL = D.variants.filter((v) => !APP || ROUTE === "all" || v.family === ROUTE);
 if (!EVAL.length) { console.error(`資料裡沒有 ${ROUTE}`); process.exit(1); }
+// --extra [N]：把共用路段的其他台北市路線一起追蹤（只拿它們的車來量段速，不評估它們）。記錄只有台北市的車。
+//   不給 N：凡是共用兩段以上的都加（上限）；給 N：用頁面同一個挑法（core.helperRoutes）挑 N 條，驗證的就是頁面實際會載入的那幾條。
+const EXTRA = [];
+if (args.includes("--extra")) {
+  const mine = new Set(D.variants.map((v) => String(v.routeId))), dir = path.join(ROOT, "web", "data", "routes");
+  const limit = Number(opt("extra", "")) || 0;
+  let files = fs.readdirSync(dir).filter((x) => x.startsWith("tpe-"));
+  if (limit) {
+    const idx = JSON.parse(fs.readFileSync(path.join(ROOT, "web", "data", "city-index.json"), "utf8"));
+    const stopsAt = new Map(idx.plats.map((p) => [String(p[0]), p[4]]));
+    const skip = new Set(idx.routes.map((r, i) => (mine.has(String(r[3])) || r[2] !== "tpe" ? i : -1)).filter((i) => i >= 0));
+    files = C.helperRoutes(EVAL, stopsAt, skip, limit, 2).map((ri) => idx.routes[ri][0].replace(":", "-") + ".json");
+  }
+  for (const f of files) {
+    const r = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+    if (mine.has(String(r.routeId))) continue;
+    for (const w of r.variants) if (limit || EVAL.some((v) => C.sharedSegments(v, w).length >= 2)) EXTRA.push(w);
+  }
+  console.log(`另外追蹤 ${EXTRA.length} 個共用路段的變體（${new Set(EXTRA.map((w) => w.family)).size} 條路線）`);
+}
 const routeIds = [...new Set(D.variants.map((v) => v.routeId))];
 const idOf = (v) => (C.tidOf ? C.tidOf(v) : String(v.subRouteId));      // 舊版 core 用子路線編號
 
@@ -53,19 +76,23 @@ const bdFiles = list("GetBusData"), etFiles = list("GetEstimateTime");
 if (!bdFiles.length) { console.error("沒有 GetBusData 快照"); process.exit(1); }
 
 // ---------------------------------------------------------------- 第一遍：重播並記下預測、同時收集完整軌跡
-const tracker = C.createTracker(D.variants);
+const tracker = C.createTracker([...D.variants, ...EXTRA]);
 const full = new Map();          // 車 → [{t, km, sub, duty}]（不修剪，用來算實際到站）
 const preds = [];
 let etaIdx = -1, eta = null, lastPredT = -Infinity, nSnap = 0;
 const etaTimes = etFiles.map((f) => { const b = load(f); return { f, t: C.parseTpe(b.EssentialInfo.UpdateTime), b: null }; });
 
+const shadow = FROM ? C.createTracker([...D.variants]) : null;     // 有 --from 時：另一個從頭追蹤的追蹤器，只用來收完整軌跡
+let openedAt = null;
 for (const f of bdFiles) {
   const bd = load(f);
   const now = C.parseTpe(bd.EssentialInfo.UpdateTime);
   if (!Number.isFinite(now)) continue;
   nSnap++;
-  C.ingestBusData(tracker, bd, now);
-  for (const [id, bus] of tracker.buses) {
+  const opened = !FROM || C.fmtTime(now) >= FROM || (openedAt != null);
+  if (shadow) C.ingestBusData(shadow, bd, now);
+  if (opened) { if (openedAt == null) openedAt = now; C.ingestBusData(tracker, bd, now); }
+  for (const [id, bus] of (shadow || tracker).buses) {
     const p = bus.trace[bus.trace.length - 1];
     if (!p) continue;
     if (!full.has(id)) full.set(id, []);
@@ -78,6 +105,7 @@ for (const f of bdFiles) {
     if (!e.b) { e.b = C.indexEta(load(e.f), routeIds); for (const x of etaTimes) if (x !== e) x.b = null; }
     eta = e.b;
   }
+  if (!opened || (PREDICT_MIN && now - openedAt > PREDICT_MIN * 60e3)) continue;
   if (now - lastPredT < EVERY_S * 1000) continue;
   lastPredT = now;
   for (const v of EVAL) {

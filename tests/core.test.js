@@ -102,13 +102,16 @@ test("該站後方沒有追蹤中的車，但官方有預估 → 列為未定位
   assert.deepEqual(at(r.perStop[1]), [[null, "09:34", "官方・未定位"]]);
 });
 
-test("前車段速：前車剛以 30 km/h 跑過 → 後車用前車段速", () => {
+test("前車段速：前車剛以 30 km/h 跑過 → 後車的推估往前車的速度靠，但不照抄一台車", () => {
   const tr = trackerWith([
     ["09:18", [fix("A", 3, "09:18")]], ["09:20", [fix("A", 4, "09:20")]], ["09:22", [fix("A", 5, "09:22")]],
     ["09:24", [fix("A", 6, "09:24")]], ["09:26", [fix("A", 7, "09:26"), fix("B", 3, "09:26")]],
   ]);
   const r = C.routeArrivals(tr, "900", null, T("09:26"));
-  assert.deepEqual(at(r.perStop[6]).find((x) => x[0] === "B"), ["B", "09:32", "前車"]);   // 3 km × 2 分/km
+  const b = r.perStop[6].find((x) => x.bus === "B"), min = (b.ms - T("09:26")) / 60e3;
+  assert.equal(b.source, "前車");
+  // 3 km：照抄前車（2 分/km）是 6 分、預設車速（18 km/h）是 10 分。只看過一台車，增益約 0.56，再扣掉幾分鐘的衰退 → 約 7.9 分
+  assert.ok(min > 7.6 && min < 8.2, `應約 7.9 分，實得 ${min}`);
 });
 
 test("同一台車的推估時刻沿路線不倒退（官方預估前後矛盾時）", () => {
@@ -128,7 +131,7 @@ test("只推算到 90 分鐘內", () => {
   // 前車段速極慢（12 分/km）：0.5 km → 10 km 要 114 分，超過 90 分的站不列
   const tr = trackerWith([["09:30", [fix("B", 0.5, "09:30")]]]);
   const ent = C.entOf(tr, "900");
-  for (let b = 0; b < 50; b++) ent.bins[b] = { pace: 12, at: T("09:29") };
+  for (let b = 0; b < 50; b++) ent.bins[b] = C.paceState(12, T("09:30"));
   const r = C.routeArrivals(tr, "900", null, T("09:30"));
   assert.equal(r.perStop[8].length, 1);                            // 7.5 km × 12 = 90 分以內
   assert.equal(r.perStop[10].length, 0);
@@ -193,7 +196,7 @@ test("共用路段：長度差超過 10% 視為不同街道", () => {
 test("借用段速：共用路段用另一變體剛跑過的段速，分岔段不借", () => {
   const tr = C.createTracker([VA, VB]);
   const now = T("09:30"), B = C.entOf(tr, "911");
-  for (let k = 0; k < 5.05; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = { pace: 3, at: now - 60e3 };
+  for (let k = 0; k < 5.05; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = C.paceState(3, now - 60e3);
   const A = C.entOf(tr, "910");
   const shared = C.travelMin(A, 3, 4, 1, now);
   assert.ok(Math.abs(shared.min - 3) < 0.1, `共用路段應約 3 分，實得 ${shared.min}`);
@@ -207,24 +210,25 @@ test("借用段速：共用路段用另一變體剛跑過的段速，分岔段�
 test("借用段速：本線與另一線都有時取較新的那筆", () => {
   const tr = C.createTracker([VA, VB]);
   const now = T("09:30"), A = C.entOf(tr, "910"), B = C.entOf(tr, "911");
-  for (let k = 3; k < 4; k += 0.2) A.bins[Math.floor(k / C.P.binKm + 1e-9)] = { pace: 1, at: now - 20 * 60e3 };
-  for (let k = 3; k < 4.1; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = { pace: 3, at: now - 60e3 };
-  assert.ok(C.travelMin(A, 3, 4, 9, now).min > 2.5, "較新的 B 段速（3 分/km）應優先");
-  for (let k = 3; k < 4; k += 0.2) A.bins[Math.floor(k / C.P.binKm + 1e-9)] = { pace: 1, at: now };
-  assert.ok(C.travelMin(A, 3, 4, 9, now).min < 1.5, "A 自己更新後改用 A");
+  for (let k = 3; k < 4; k += 0.2) A.bins[Math.floor(k / C.P.binKm + 1e-9)] = C.paceState(2, now - 20 * 60e3);
+  for (let k = 3; k < 4.1; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = C.paceState(4, now - 60e3);
+  assert.ok(C.travelMin(A, 3, 4, 9, now).min > 3.5, "較新的 B 段速（4 分/km）應優先");
+  for (let k = 3; k < 4; k += 0.2) A.bins[Math.floor(k / C.P.binKm + 1e-9)] = C.paceState(2, now);
+  assert.ok(C.travelMin(A, 3, 4, 9, now).min < 2.2, "A 自己更新後改用 A");
 });
 
 test("借用段速：車少的變體在共用路段的推算來源變成前車", () => {
   const tr = C.createTracker([VA, VB]);
   const now = T("09:30"), B = C.entOf(tr, "911");
-  for (let k = 3; k < 5.05; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = { pace: 3, at: now - 60e3 };
+  for (let k = 3; k < 5.05; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = C.paceState(3, now - 60e3);
   C.ingestBusData(tr, { BusInfo: [{ ...fix("X", 3, "09:30"), RouteID: "910" }] }, now);
   const r = C.routeArrivals(tr, "910", null, now);
   assert.deepEqual(at(r.perStop[4])[0], ["X", "09:33", "前車"]);     // 共2→共3 1 km × 3 分
 });
 
 // ---------------------------------------------------------------- 前車段速（越界時刻法）
-const binTimes = (tr, sub = "900") => C.entOf(tr, sub).bins.map((b, i) => (b ? [Number((i * 0.2).toFixed(1)), Number((b.pace * 0.2).toFixed(2))] : null)).filter(Boolean);
+// 每個分段最後一台車花了幾分鐘（量測本身；推算用的是濾波後的值，見「段速的卡爾曼濾波」）
+const binTimes = (tr, sub = "900") => C.entOf(tr, sub).bins.map((b, i) => (b ? [Number((i * 0.2).toFixed(1)), Number((b.last * 0.2).toFixed(2))] : null)).filter(Boolean);
 
 test("段速包含停靠時間：在 0.7 km 停 2 分鐘，0.6–0.8 km 這段算 2.75 分", () => {
   const tr = trackerWith([["09:00", [fix("X", 0.5, "09:00")]], ["09:01", [fix("X", 0.7, "09:01")]], ["09:02", [fix("X", 0.7, "09:02")]],
@@ -537,16 +541,101 @@ test("前方路況：只就量到的分段算均速，並回報量到的比例",
   const tr = C.createTracker([VARIANT]);
   const ent = C.entOf(tr, "900"), now = T("09:30");
   // 站6 前方 2 km（4–6 km）：只有 5–6 km 有資料，每公里 6 分鐘＝10 km/h
-  for (let b = 25; b < 30; b++) ent.bins[b] = { pace: 6, at: now - 60e3 };
+  for (let b = 25; b < 30; b++) ent.bins[b] = C.paceState(6, now);
   const r = C.roadAhead(tr, "900", 6, now);
   assert.ok(Math.abs(r.coverage - 0.5) < 1e-9);
   assert.ok(Math.abs(r.kmh - 10) < 1e-6, `應為 10 km/h，實得 ${r.kmh}`);
   assert.deepEqual(C.roadAhead(tr, "900", 3, now), { coverage: 0, kmh: null }, "完全沒量到：不給速度");
   assert.equal(C.roadAhead(tr, "900", 0.2, now), null, "起點附近沒有前方");
-  // 資料過期（超過 45 分鐘）就不算
-  for (let b = 25; b < 30; b++) ent.bins[b] = { pace: 6, at: now - 50 * 60e3 };
-  assert.equal(C.roadAhead(tr, "900", 6, now).kmh, null);
+  // 很久沒有車經過：不是一刀切丟掉，而是慢慢退回預設車速（18 km/h）。50 分鐘前量到 10 km/h → 現在當成約 13.4 km/h
+  for (let b = 25; b < 30; b++) ent.bins[b] = C.paceState(6, now - 50 * 60e3);
+  const old = C.roadAhead(tr, "900", 6, now);
+  assert.ok(Math.abs(old.kmh - 60 / (60 / 18 + (6 - 60 / 18) * Math.exp(-50 / 60))) < 1e-6 && old.kmh > 13.3 && old.kmh < 13.4, `實得 ${old.kmh}`);
+  for (let b = 25; b < 30; b++) ent.bins[b] = C.paceState(6, now - 600 * 60e3);
+  assert.ok(Math.abs(C.roadAhead(tr, "900", 6, now).kmh - 18) < 0.01, "十小時前的：等於預設車速");
+  // 升級前存在瀏覽器裡的舊格式（沒有變異數）：不用
+  for (let b = 25; b < 30; b++) ent.bins[b] = { pace: 6, at: now };
+  assert.deepEqual(C.roadAhead(tr, "900", 6, now), { coverage: 0, kmh: null });
 });
+
+// ---------------------------------------------------------------- 段速的卡爾曼濾波
+test("段速的卡爾曼更新：第一台車的增益是 S/(S+R)，看過越多台越接近它們的平均，不是只信最新一台", () => {
+  const t0 = T("09:00"), prior = 60 / 18, S = C.P.paceVar, R = C.P.paceNoise, near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg || ""} ${a} vs ${b}`);
+  // 第一台：每公里 6 分鐘（預設 3.33）
+  const a = C.paceUpdate(undefined, 6, t0), K1 = S / (S + R);
+  near(a.dev, K1 * (6 - prior)); near(a.var, S * (1 - K1));
+  assert.deepEqual([a.at, a.last], [t0, 6]);
+  near(C.paceNow(a, t0), prior + K1 * (6 - prior), "當下的步調＝預設＋偏差");
+  // 同一時刻第二台也是 6：變異數已經變小，增益跟著變小；估計更靠近 6
+  const b = C.paceUpdate(a, 6, t0), K2 = a.var / (a.var + R);
+  near(b.dev, a.dev + K2 * (6 - prior - a.dev)); near(b.var, a.var * (1 - K2));
+  assert.ok(K2 < K1 && b.dev > a.dev && b.dev < 6 - prior);
+  // 連續 30 台都是 6：收斂到 6（差不到 2%）
+  let x; for (let i = 0; i < 30; i++) x = C.paceUpdate(x, 6, t0);
+  assert.ok(Math.abs(C.paceNow(x, t0) - 6) < 0.12, `${C.paceNow(x, t0)}`);
+  // 一快一慢輪流（2、6、2、6…）：落在中間，不是跟著最後一台跑
+  let y; for (let i = 0; i < 20; i++) y = C.paceUpdate(y, i % 2 ? 6 : 2, t0);
+  assert.ok(C.paceNow(y, t0) > 3.7 && C.paceNow(y, t0) < 4.3, `${C.paceNow(y, t0)}`);
+  assert.equal(y.last, 6, "last 記的是最後那一台自己的步調");
+  // 舊格式（沒有 var）當成沒有：從頭開始
+  assert.deepEqual(C.paceUpdate({ pace: 9, at: t0 }, 6, t0), a);
+  // 參數要真的用到：雜訊越大越不信單一台車；分段差異越大越信
+  const keep = { ...C.P };
+  try {
+    C.P.paceNoise = 47; assert.ok(C.paceUpdate(undefined, 6, t0).dev < a.dev / 3);
+    C.P.paceNoise = keep.paceNoise; C.P.paceVar = 60; assert.ok(C.paceUpdate(undefined, 6, t0).dev > a.dev * 1.5);
+  } finally { Object.assign(C.P, keep); }
+});
+
+test("段速的衰退：沒有新的車經過，偏差以時間常數退回預設車速，下一台車的增益跟著回升", () => {
+  const t0 = T("09:00"), prior = 60 / 18, tau = C.P.paceTauMin, S = C.P.paceVar, R = C.P.paceNoise;
+  const a = C.paceState(6, t0);
+  assert.deepEqual(a, { at: t0, dev: 6 - prior, var: 0, last: 6 });
+  const after = (min) => C.paceNow(a, t0 + min * 60e3) - prior;
+  assert.ok(Math.abs(after(0) - (6 - prior)) < 1e-9);
+  assert.ok(Math.abs(after(tau) - (6 - prior) / Math.E) < 1e-9, "過了一個時間常數：剩 1/e");
+  assert.ok(Math.abs(after(tau / 2) - (6 - prior) * Math.exp(-0.5)) < 1e-9);
+  assert.ok(Math.abs(after(600)) < 0.001, "十小時後等於預設車速");
+  // 比預設快的也一樣退回來；而且不會快過 maxKmh（40 km/h＝1.5 分/km）
+  assert.ok(Math.abs(C.paceNow(C.paceState(2, t0), t0 + tau * 60e3) - (prior + (2 - prior) / Math.E)) < 1e-9);
+  assert.equal(C.paceNow(C.paceState(0.5, t0), t0), 60 / C.P.maxKmh);
+  // 更新時先把舊狀態衰退到現在：隔了一個時間常數，變異數回升到 S(1 − e⁻²)，增益也跟著變大
+  const sure = C.paceState(6, t0);                                  // 變異數 0：當下再來一台完全不動
+  assert.ok(Math.abs(C.paceUpdate(sure, 2, t0).dev - (6 - prior)) < 1e-9);
+  const later = C.paceUpdate(sure, 2, t0 + tau * 60e3), v = S * (1 - Math.exp(-2)), K = v / (v + R), d0 = (6 - prior) / Math.E;
+  assert.ok(Math.abs(later.dev - (d0 + K * (2 - prior - d0))) < 1e-9);
+  assert.ok(Math.abs(later.var - v * (1 - K)) < 1e-9);
+  // 很久以後的第一台車，增益回到 S/(S+R)
+  const fresh = C.paceUpdate(sure, 2, t0 + 3000 * 60e3);
+  assert.ok(Math.abs(fresh.dev - (S / (S + R)) * (2 - prior)) < 1e-6);
+  // 預設車速分白天夜間：偏差是相對於「當時那個時段」的預設車速
+  const keep = { ...C.P };
+  try {
+    Object.assign(C.P, { defaultKmhDay: 12, defaultKmh: 20, dayStartH: 7, dayEndH: 21 });
+    assert.ok(Math.abs(C.paceState(6, T("09:00")).dev - (6 - 5)) < 1e-9);
+    assert.ok(Math.abs(C.paceState(6, T("22:00")).dev - (6 - 3)) < 1e-9);
+    assert.ok(Math.abs(C.paceUpdate(undefined, 6, T("22:00")).dev - (S / (S + R)) * 3) < 1e-9);
+    assert.ok(Math.abs(C.paceUpdate(undefined, 6, T("09:00")).dev - (S / (S + R)) * 1) < 1e-9, "白天的更新相對於白天的預設車速");
+    // 白天量到比預設慢 1 分/km 的分段，到了夜間（沒有衰退時）是夜間的預設 3 ＋ 1
+    C.P.paceTauMin = 1e9;
+    assert.ok(Math.abs(C.paceNow(C.paceState(6, T("20:59")), T("21:00")) - 4) < 1e-6);
+  } finally { Object.assign(C.P, keep); }
+});
+
+test("從來沒有車跑過的分段用後備車速；跑過的分段用濾波後的段速", () => {
+  const tr = C.createTracker([VARIANT]), ent = C.entOf(tr, "900"), now = T("09:30");
+  // 3–4 km 有段速（每公里 6 分），4–5 km 沒有：後備給每公里 2 分
+  for (let b = 15; b < 20; b++) ent.bins[b] = C.paceState(6, now);
+  const r = C.travelMin(ent, 3, 5, 2, now);
+  assert.ok(Math.abs(r.min - 8) < 1e-9, `${r.min}`);
+  assert.ok(Math.abs(r.coverage - 0.5) < 1e-9);
+  // 30 分鐘前量的：涵蓋照算（有車跑過），步調往預設退
+  for (let b = 15; b < 20; b++) ent.bins[b] = C.paceState(6, now - 30 * 60e3);
+  const old = C.travelMin(ent, 3, 4, 2, now);
+  assert.equal(old.coverage, 1);
+  assert.ok(Math.abs(old.min - (60 / 18 + (6 - 60 / 18) * Math.exp(-0.5))) < 1e-9);
+});
+
 
 test("站序相同的不同營運業者併成一條：官方預估只分給整條路線最近的那台，不重複", () => {
   // 兩家業者的車回報不同編號（600、601），但跑同一條路線、共用同一個官方預估
@@ -1032,7 +1121,7 @@ test("車程：沒有車可以對（未發車、沒定位、超出推估範圍�
   const empty = C.createTracker([VARIANT]);
   const e = C.rideEstimate(empty, "900|0", C.routeArrivals(empty, "900|0", null, T("09:00")), 3, 6, T("09:00"));
   assert.deepEqual([e.bus, Math.round(e.min * 100) / 100, e.boardMs, e.arriveMs, e.coverage], [null, 10, null, null, 0]);
-  // 前車剛用每公里 6 分鐘跑過 3–6 km（比預設慢）：現在沒有車，車程照前車的速度算
+  // 前車用每公里 6 分鐘跑過 3–6 km（比預設慢）：現在沒有車，車程往前車的速度靠（濾波後的段速）
   const steps = [];
   for (let i = 0; i <= 30; i++) steps.push([`09:${String(i).padStart(2, "0")}`, [fix("前車", 2.5 + i / 6, `09:${String(i).padStart(2, "0")}`)]]);
   const tr = trackerWith(steps);
@@ -1041,7 +1130,8 @@ test("車程：沒有車可以對（未發車、沒定位、超出推估範圍�
   assert.equal(R.active.length, 0);
   const slow = C.rideEstimate(tr, "900|0", R, 3, 6, now);
   assert.equal(slow.bus, null);
-  assert.ok(Math.abs(slow.min - 18) < 0.5, `車程 ${slow.min}`);
+  // 預設車速是 10 分、照抄那一台是 18 分；只看過一台、又過了二三十分鐘 → 約 12.8 分
+  assert.ok(slow.min > 12.3 && slow.min < 13.3, `車程 ${slow.min}`);
   assert.ok(slow.coverage > 0.95);
   // 逐班表路線、車還沒發：上車時刻用班表推的那一班，幾點到＝上車時刻＋車程
   const tt = C.createTracker([TT]);
@@ -1126,5 +1216,55 @@ test("替新路線挑顏色：同一個站不重複，其次挑用得最少的�
   for (let i = 0; i < 10; i++) used.push(C.pickColor(P10, used, used));
   assert.equal(new Set(used).size, 10);
   assert.equal(C.pickColor(P10, used, used), "色0");
+});
+
+// ---------------------------------------------------------------- 幫忙量路況的路線
+test("挑幫手路線：每次挑能補最多站間段的那一條；只經過一段的不挑；跳過指定的；挑到上限或沒有幫助為止", () => {
+  // 關注的路線經過站牌 1→2→3→4→5（四個站間段）。其他路線：10 號經過 1、2、3、4、5；11 號經過 1、2、3；12 號經過 3、4、5；13 號只經過 4、5；14 號走反方向
+  const mine = [{ stops: [1, 2, 3, 4, 5].map((n) => ({ station: n })) }];
+  const at = { 1: [[10, 0], [11, 0], [14, 1]], 2: [[10, 0], [11, 0], [14, 1]], 3: [[10, 0], [11, 0], [12, 0], [14, 1]], 4: [[10, 0], [12, 0], [13, 0], [14, 1]], 5: [[10, 0], [12, 0], [13, 0]] };
+  const stopsAt = new Map(Object.entries(at)), pick = (skip, limit, need, vs = mine) => C.helperRoutes(vs, stopsAt, new Set(skip), limit, need);
+  // 方向不看（去返程的區別在站牌編號上：對向是另一根站牌），所以 14 號也算經過 1>2、2>3、3>4
+  assert.deepEqual(pick([], 10, 1), [10], "一條就把四段都補到一次了：其他的沒有幫助");
+  assert.deepEqual(pick([], 10, 2), [10, 14, 12], "每段要兩條：10 補四段、14 再補三段（和 11、12 同分時取序號小的…11 只補得到兩段）、最後 12 補 4>5");
+  assert.deepEqual(pick([], 2, 2), [10, 14], "上限兩條");
+  assert.deepEqual(pick([10], 10, 1), [14, 12], "跳過 10 號");
+  assert.deepEqual(pick([10, 14], 10, 1), [11, 12], "同樣補兩段：序號小的先");
+  assert.deepEqual(pick([10, 11, 12, 14], 10, 1), [], "13 號只經過一段：不挑（共用路段要連續兩站以上才借得到）");
+  assert.deepEqual(pick([], 0, 2), []);
+  // 站牌編號是字串或數字都對得上；索引裡沒有的站牌不影響
+  assert.deepEqual(C.helperRoutes([{ stops: ["1", "2", "3", "99"].map((n) => ({ station: n })) }], stopsAt, new Set(), 1, 1), [10]);
+  // 兩條關注的路線：站間段合起來算，重複的只算一次
+  const two = [mine[0], { stops: [3, 4, 5].map((n) => ({ station: n })) }];
+  assert.deepEqual(pick([], 10, 1, two), [10]);
+  assert.deepEqual(C.helperRoutes([], stopsAt, new Set(), 10, 2), []);
+});
+
+test("幫手路線的車只留最近十分鐘的軌跡；使用者關注了它就改回一般路線", () => {
+  const H = { ...VARIANT, subRouteId: "950", routeId: "95H", label: "幫手" };
+  const tr = C.createTracker([VARIANT]);
+  assert.equal(C.addVariants(tr, [H], true).length, 1);
+  assert.deepEqual([C.entOf(tr, "900").helper, C.entOf(tr, "950").helper], [false, true]);
+  for (let m = 0; m <= 30; m++) {
+    const hhmm = `09:${String(m).padStart(2, "0")}`;
+    C.ingestBusData(tr, { BusInfo: [fix("一般", 1 + m * 0.1, hhmm), fix("幫手車", 1 + m * 0.1, hhmm, { route: "950" })] }, T(hhmm));
+  }
+  assert.equal(tr.buses.get("一般").trace.length, 31);
+  assert.equal(tr.buses.get("幫手車").trace.length, 11, "09:20–09:30");
+  assert.ok(C.entOf(tr, "950").bins.filter(Boolean).length > 5, "段速照樣記");
+  // 再加一次、這次不是幫手：不重複加，但身分改掉，軌跡從此留完整的
+  assert.equal(C.addVariants(tr, [H]).length, 0);
+  assert.equal(C.entOf(tr, "950").helper, false);
+  C.ingestBusData(tr, { BusInfo: [fix("幫手車", 4.1, "09:31", { route: "950" })] }, T("09:31"));
+  assert.equal(tr.buses.get("幫手車").trace.length, 12);
+  // 以幫手的身分再加一次已經是一般路線的：不會被降回幫手
+  C.addVariants(tr, [H], true);
+  assert.equal(C.entOf(tr, "950").helper, false);
+});
+
+test("共用路段的比對：站牌編號一邊是字串、一邊是數字也對得上（內建路線與全市路線檔）", () => {
+  const A = { stops: ["1", "2", "3"].map((n, i) => ({ station: n, name: "站" + n, km: i })) };
+  const B = { stops: [1, 2, 3].map((n, i) => ({ station: n, name: "站" + n, km: i })) };
+  assert.deepEqual(C.sharedSegments(A, B).map((s) => [s.v0, s.v1]), [[0, 1], [1, 2]]);
 });
 

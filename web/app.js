@@ -166,6 +166,39 @@ function startApp() {
     } catch (e) { state.cityNote = "全市路線與站牌資料讀不到（" + e.message + "），只能看已經載入的路線"; }
     polesCache.clear(); posCache.clear();
     render();
+    ensureHelpers();
+  }
+
+  // ---------------------------------------------------------------- 幫忙量路況的路線
+  // 別條路線的車跑過同一段路，一樣說明那一段現在好不好走。所以除了關注的路線，另外在背景載入幾條「和它們共用路段」的路線，
+  // 只拿它們的車來量段速：不上畫面、不算到站、不出現在任何清單。剛打開頁面、自己路線的車還沒跑過時最有用。
+  // 只挑和關注的路線同一個城市的（另一個城市的車輛資料要另外抓，為了幫手多抓一份不划算），最多 HELPER_MAX 條。
+  const HELPER_MAX = 24;
+  const helpers = new Set();          // 已經當幫手加進追蹤器的路線鍵
+  let helperRev = -1, helperBusy = false;
+  async function ensureHelpers() {
+    if (!CITY || helperBusy || helperRev === watchRev) return;
+    helperBusy = true;
+    try {
+      const rev = watchRev;
+      const mine = V.filter((v) => activeKeys.has(v.key)), srcs = new Set(mine.map((v) => v.src || "tpe"));
+      const stopsAt = { get: (id) => (cityPlat.get(String(id)) || [])[4] };
+      const skip = new Set();
+      CITY.routes.forEach((r, i) => { if (loaded.has(r[0]) || !srcs.has(r[2])) skip.add(i); });
+      for (const ri of C.helperRoutes(mine, stopsAt, skip, HELPER_MAX, 2)) {
+        const key = CITY.routes[ri][0];
+        if (helpers.has(key) || loaded.has(key)) continue;
+        try {
+          const f = await fetchRoute(key);
+          if (loaded.has(key)) continue;                           // 等的時候使用者剛好關注了它：已經由關注那邊加進去了
+          const added = C.addVariants(tracker, f.variants, true);
+          helpers.add(key);
+          restore(new Set(added.flatMap((e) => e.tids)));
+        } catch (e) { /* 這條幫手的資料讀不到：少一條而已，不影響畫面 */ }
+      }
+      helperRev = rev;
+    } finally { helperBusy = false; }
+    if (helperRev !== watchRev) ensureHelpers();                   // 載入的時候關注的路線又變了：再挑一次
   }
 
   // ---------------------------------------------------------------- 地點與關注
@@ -303,7 +336,8 @@ function startApp() {
     const bins = {};
     for (const ent of tracker.ents) bins[ent.tid] = ent.bins;
     const keep = now - 20 * 60e3;                               // 只存最近 20 分鐘的軌跡：追蹤的路線變多後，存太久會超過瀏覽器的儲存上限
-    const buses = [...tracker.buses.values()].map((b) => ({ ...b, trace: b.trace.filter((p) => p.t >= keep) }));
+    const shown = new Set(V.flatMap((v) => (v.tids && v.tids.length ? v.tids : [C.tidOf(v)])));     // 幫手路線的車不存軌跡（只存段速），不然很快就超過上限
+    const buses = [...tracker.buses.values()].filter((b) => shown.has(b.tid)).map((b) => ({ ...b, trace: b.trace.filter((p) => p.t >= keep) }));
     ls.set(trackKey(), { buses, bins });
   }
   /** 把存起來的軌跡放回去。only＝只放這些車輛回報編號的（之後才載入的路線）；已經有即時資料的不蓋掉。 */
@@ -383,6 +417,7 @@ function startApp() {
       activeKeys = new Set();
       for (const us of Object.values(watch)) for (const u of us) for (const v of unitsOf.get(u) || []) activeKeys.add(v.key);
       activeRev = watchRev;
+      ensureHelpers();                                             // 關注的路線變了：幫手路線跟著重挑（在背景載入）
     }
     const extra = state.tab === "route" || state.tab === "marey" ? groupOf(state.group).vs : [];
     for (const v of V) {
@@ -426,7 +461,7 @@ function startApp() {
     if (source.startsWith("官方・")) return `<span class="src official" title="官方預估到站；這台車目前沒有定位資料">官方</span>`;
     if (source === "班表") return `<span class="src sched" title="起點還沒發車，依班表推算">班表</span>`;
     if (source === "班距") return `<span class="src sched" title="這條路線只公布班距：下一班最晚在班距上限內從起點發車，再加上開到這站的時間">班距</span>`;
-    const detail = { 前車: "前車實際段速", 均速: "這台車近 5 分鐘均速", 預設: "預設車速" };
+    const detail = { 前車: "前面幾台車跑過這一段的時間（平均）", 均速: "這台車近 5 分鐘均速", 預設: "預設車速" };
     const t = source.replace("官方→", "以官方預估為起點，接續用").replace(/前車|均速|預設/g, (m) => detail[m]);
     return `<span class="src" title="${esc(t)}">推算</span>`;
   }
@@ -1486,6 +1521,6 @@ function startApp() {
   boot();
   setInterval(() => { if (!document.hidden) { compute(); render(); } }, 5e3);
   window.__busApp = { state, tracker, A, V, groups, stations, stMarkers, busMarkers, unitsOf, loaded, get watch() { return watch; }, get map() { return map; }, get city() { return CITY; },
-    get posSel() { return posSel; }, placeView, allPlaces, currentPlace, openStop, openRoute, ensureRoute };   // 除錯用
+    get posSel() { return posSel; }, helpers, placeView, allPlaces, currentPlace, openStop, openRoute, ensureRoute };   // 除錯用
 }
 startApp();

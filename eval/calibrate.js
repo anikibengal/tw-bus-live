@@ -15,6 +15,8 @@ const { execFileSync } = require("child_process");
 const ROOT = path.resolve(__dirname, "..");
 const C = require(path.join(ROOT, "web", "core.js"));
 
+// --set a=1,b=2：覆寫核心參數做實驗（原樣轉給 replay.js），只和 --dry 一起用
+const SET = process.argv.includes("--set") ? ["--set", process.argv[process.argv.indexOf("--set") + 1]] : [];
 const EDGES = [0, 3, 6, 10, 15, 20, 30, 45, 90];     // 依「預測還有幾分鐘」分組（執行時拿得到的量）
 const GROUPS = ["官方", "官方→推算", "推算"];
 const MIN_N = 150;                                    // 每個區間至少這麼多筆才自己算分位數
@@ -106,7 +108,8 @@ function outOfSample(rows, q) {
 function replayRows(dir, tag) {
   const tmp = path.join(os.tmpdir(), `bus-calib-${process.pid}-${path.basename(dir)}.json`);
   try {
-    execFileSync(process.execPath, [path.join(__dirname, "replay.js"), dir, "--app", "--route", "all", "--tag", `calib-${tag}`, "--dump", tmp],
+    // --extra 24：和頁面一樣，另外追蹤 24 條幫忙量路況的路線（core.helperRoutes 挑的）
+    execFileSync(process.execPath, [path.join(__dirname, "replay.js"), dir, "--app", "--route", "all", "--extra", "24", "--tag", `calib-${tag}`, "--dump", tmp, ...SET],
       { stdio: ["ignore", "ignore", "inherit"] });
     return JSON.parse(fs.readFileSync(tmp, "utf8"));
   } finally { fs.rmSync(tmp, { force: true }); }
@@ -115,7 +118,7 @@ function replayRows(dir, tag) {
 function main() {
   const args = process.argv.slice(2);
   const opt = (k, d) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : d; };
-  const dirs = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && ["--quantile", "--tag"].includes(args[i - 1])));
+  const dirs = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && ["--quantile", "--tag", "--set"].includes(args[i - 1])));
   if (!dirs.length) { console.error("用法：node eval/calibrate.js logs/<記錄> [logs/<記錄> ...] [--quantile 0.9] [--tag v3.0] [--dry]"); process.exit(1); }
   const q = Number(opt("quantile", "0.9")), tag = opt("tag", "core");
   const rows = dirs.flatMap((d) => replayRows(d, tag));

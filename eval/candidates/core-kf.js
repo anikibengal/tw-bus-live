@@ -1,4 +1,11 @@
-/* 即時公車路線圖核心邏輯（純函式，瀏覽器與 Node 共用）。
+/* 【實驗用，不是頁面在跑的版本】段速可以改用卡爾曼濾波（P.kf）。其餘和 web/core.js v3.7 相同。
+ * 每個 0.2 km 分段的狀態＝「這一段現在比預設車速慢多少」（分／公里的差，dev），照均值回歸的隨機過程演變：
+ *   沒有新的觀測時，dev 以時間常數 kfTauMin 往 0（＝預設車速）退，變異數往 kfS 回升；
+ *   每有一台車越過這一段（觀測 z，雜訊變異數 kfR），用卡爾曼增益 K = var / (var + kfR) 更新。
+ * kfR = 0 → K = 1：只信最新一台車（現行做法，但過期改成慢慢退回預設，不是 45 分鐘一刀切）。
+ * P.kfLog 給一個陣列時，每筆觀測都記進去（估參數用）。
+ *
+ * 即時公車路線圖核心邏輯（純函式，瀏覽器與 Node 共用）。
  *
  * 名詞：
  *   variant  路線變體＋方向（例：307莒光往撫遠街），資料來自 build_static.py
@@ -23,12 +30,7 @@
     staleFixMin: 3,                  // 定位超過幾分鐘沒更新就不採用
     passTolKm: 0.03,                 // 車位超過站點這麼多才算「已過站」
     binKm: 0.2,                      // 前車段速的分段長度
-    // 段速用卡爾曼濾波（v3.8）。10/3 兩段記錄量到：同一個分段上，相隔 3 分鐘的兩台車步調差多少（半方差 4.7），和相隔一小時的（5.1）
-    // 幾乎一樣——前一台車在這一段跑多快，多半是它自己的運氣（紅燈、靠站），不是路況在變；穩定的是各分段自己的平均（有站、有紅燈的本來就慢）。
-    // 所以把同一段看過的每一台車平均起來，不是只信最新的那一台；沒看過、或太久沒車經過，就往預設車速靠。
-    paceVar: 6,                      // 一個分段真正的步調偏離預設車速多少（變異數，(分/公里)²）：量到的「分段之間」的變異
-    paceNoise: 4.7,                  // 單一台車在一個分段的雜訊（變異數）：同一段、相隔 5 分鐘內兩台車的半方差
-    paceTauMin: 60,                  // 沒有新的車經過時多久退回預設車速（分鐘）。白天長一點準、夜間短一點準，60 是兩邊都顧到的
+    paceFreshMin: 45,                // 前車段速多舊以內才用
     ownSpeedWindowMin: 5,            // 自身均速取最近幾分鐘
     // 沒有任何速度資料時（剛打開頁面、前面沒有車跑過）的預設車速。10/3（六）重播、完全沒有歷史時的非官方推估：
     //   白天 09–11 時 18→14 km/h：10–20 分 MAE 3.3→2.5、20–40 分 6.7→4.0；深夜 22–00 時 18→17：2.1→2.0、3.4→3.2
@@ -45,9 +47,9 @@
     originKm: 0.5,                   // 起點附近：有車停在這裡就不再用班表補同一班
     originMatchMin: 12,              // 起點附近的車對到 ±12 分內最近的班表發車時刻
     traceKeepMin: 180,
-    helperKeepMin: 10,               // 幫手路線（只拿來量段速、不上畫面）的車，軌跡只留這麼久：夠算段速就好，省記憶體
     gapResetMin: 4,                  // 相鄰定位間隔超過這個就不算段速
     maxBinMin: 5,                    // 單一 0.2 km 分段最多算 5 分鐘
+    kf: false, kfTauMin: 30, kfS: 4, kfR: 9, kfLog: null,
   };
 
   // ---------------------------------------------------------------- 時間
@@ -319,43 +321,6 @@
     const cost = (c) => (free.length ? 0 : count(nearby, c) * 1e6) + count(all, c);
     return pool.reduce((best, c) => (cost(c) < cost(best) ? c : best), pool[0]);
   }
-  /**
-   * 挑「幫忙量路況」的路線：別條路線的車跑過同一段路，一樣說明那一段現在好不好走，剛打開頁面、自己路線的車還沒跑過時特別有用
-   * （10/3 記錄：打開後 15 分鐘內，夜間誤差少約一成、白天少 2%；開久了沒有差別）。
-   * 要載入別條路線的站序才用得上，所以只挑最划算的幾條：把關注的路線拆成「相鄰兩站」，每次挑能讓最多「還不到 need 條別的路線經過」的站間段
-   * 多一條的那條路線（同分時挑序號小的），挑到 limit 條或再挑也沒有幫助為止。只經過一段的路線不挑（共用路段至少要連續兩站才借得到）。
-   * variants＝關注中的變體（stops[].station）；stopsAt＝站牌編號 → [[路線序號, 方向]…]（全市索引的停靠）；skip＝不要挑的路線序號。
-   * 回傳路線序號，依挑中的先後。
-   */
-  function helperRoutes(variants, stopsAt, skip, limit, need) {
-    const pairs = new Map();                             // 站間段（「甲>乙」）→ 經過它的（路線序號|方向）
-    for (const v of variants) for (let i = 0; i + 1 < v.stops.length; i++) {
-      const a = String(v.stops[i].station), b = String(v.stops[i + 1].station), k = a + ">" + b;
-      if (pairs.has(k)) continue;
-      const atB = new Set((stopsAt.get(b) || []).map(([ri, g]) => ri + "|" + g));
-      pairs.set(k, new Set((stopsAt.get(a) || []).map(([ri, g]) => ri + "|" + g).filter((x) => atB.has(x))));
-    }
-    const covers = new Map();                            // 路線序號 → 它經過的站間段
-    for (const [k, set] of pairs) for (const x of set) {
-      const ri = Number(x.split("|")[0]);
-      if (skip.has(ri)) continue;
-      if (!covers.has(ri)) covers.set(ri, new Set());
-      covers.get(ri).add(k);
-    }
-    const count = new Map([...pairs.keys()].map((k) => [k, 0])), out = [];
-    while (out.length < limit) {
-      let best = null, gain = 0;
-      for (const [ri, ks] of [...covers].sort((x, y) => x[0] - y[0])) {
-        if (out.includes(ri) || ks.size < 2) continue;
-        const g = [...ks].filter((k) => count.get(k) < need).length;
-        if (g > gain) { best = ri; gain = g; }
-      }
-      if (best == null) break;
-      out.push(best);
-      for (const k of covers.get(best)) count.set(k, count.get(k) + 1);
-    }
-    return out;
-  }
   /** 路線名排序：數字照大小排（57 在 307 前面），不是照字元。 */
   function routeCompare(a, b) { return String(a).localeCompare(String(b), "zh-Hant", { numeric: true }); }
 
@@ -369,21 +334,17 @@
     return tracker;
   }
   /**
-   * 把變體加進追蹤器（建立時用，之後使用者關注新路線時也用）。已經在裡面的變體（同一個車輛回報編號）略過；
-   * 但原本是幫手、這次不是（使用者關注了它）的，改成一般路線，軌跡從此留完整的。
-   * helper＝只拿它的車來量段速的幫手路線：軌跡只留 helperKeepMin 分鐘。回傳這次真的加進去的追蹤單位。
+   * 把變體加進追蹤器（建立時用，之後使用者關注新路線時也用）。已經在裡面的變體（同一個車輛回報編號）略過。
+   * 回傳這次真的加進去的追蹤單位。
    */
-  function addVariants(tracker, variants, helper) {
+  function addVariants(tracker, variants) {
     const { byId, bySub, ents } = tracker, added = [];
     for (const v of variants) {
       // 一個變體可以對到多個車輛回報編號：站序相同的不同營運業者（265區 的三重、大南）是同一班車，
       // 官方預估也是整條路線共用一個數字，所以放在同一個追蹤單位裡
       const tids = v.tids && v.tids.length ? v.tids : [tidOf(v)];
-      if (tids.some((tid) => byId.has(tid))) {
-        if (!helper) for (const tid of tids) if (byId.has(tid)) byId.get(tid).helper = false;
-        continue;
-      }
-      const ent = { v, tid: tids[0], tids, line: prepLine(v), bins: [], shared: [], helper: !!helper };
+      if (tids.some((tid) => byId.has(tid))) continue;
+      const ent = { v, tid: tids[0], tids, line: prepLine(v), bins: [], shared: [] };
       ents.push(ent); added.push(ent);
       for (const tid of tids) {
         byId.set(tid, ent);
@@ -423,7 +384,7 @@
    * 回傳 [{v0, v1, w0, w1}]：本變體的公里區間與對方的公里區間。
    */
   function sharedSegments(V, W) {
-    const key = (s) => String(s.station || s.name);          // 內建路線的站牌編號是字串、全市路線檔是數字：比對前一律轉成字串
+    const key = (s) => s.station || s.name;
     const posW = new Map(W.stops.map((s, i) => [key(s), i]));
     const segs = [];
     for (let i = 0; i + 1 < V.stops.length; i++) {
@@ -477,10 +438,9 @@
       if (lastKm != null && km != null && bus.duty === "1") recordCrossings(ent, bus, lastKm, last.t, km, t);
       else bus.cross = null;
     }
-    const cut = nowMs - P.traceKeepMin * 60e3, cutHelper = nowMs - P.helperKeepMin * 60e3;
+    const cut = nowMs - P.traceKeepMin * 60e3;
     for (const [id, bus] of tracker.buses) {
-      const keep = (tracker.byId.get(bus.tid) || {}).helper ? cutHelper : cut;
-      bus.trace = bus.trace.filter((p) => p.t >= keep);
+      bus.trace = bus.trace.filter((p) => p.t >= cut);
       if (!bus.trace.length) tracker.buses.delete(id);
     }
     return added;
@@ -500,35 +460,33 @@
       // 起點附近不記（會含進等發車的時間）；單一分段超過上限也不記（長時間停車）
       if (bus.cross && bus.cross.j === j - 1 && (j - 1) * bin >= P.originKm) {
         const minutes = (tc - bus.cross.t) / 60e3;
-        if (minutes > 0 && minutes <= P.maxBinMin) ent.bins[j - 1] = paceUpdate(ent.bins[j - 1], minutes / bin, tc);
+        if (minutes > 0 && minutes <= P.maxBinMin) {
+          const z = minutes / bin;
+          if (P.kfLog) P.kfLog.push({ tid: ent.tid, bin: j - 1, t: tc, z, bus: bus.id });
+          ent.bins[j - 1] = P.kf ? kfUpdate(ent.bins[j - 1], z, tc) : { pace: z, at: tc };
+        }
       }
       bus.cross = { j, t: tc };
     }
   }
 
 
-  /**
-   * 一個分段的狀態：{ at, dev, var, last }。dev＝這一段比預設車速慢多少（分／公里，負的是比較快），var＝對 dev 多沒把握，
-   * at＝最後一台車越過的時刻，last＝那台車自己的步調（除錯與測試用，推算不看它）。
-   * 沒有新的車經過時，dev 以時間常數 paceTauMin 往 0 退、var 往 paceVar 回升（均值回歸）。
-   */
-  /** 卡爾曼更新：又有一台車以步調 z（分／公里）越過這一段。old 沒有（或是舊格式）就從「等於預設車速、變異數 paceVar」開始。 */
-  function paceUpdate(old, z, t) {
+  /** 卡爾曼更新：old＝這一段原本的狀態（沒有就從「等於預設車速、變異數 kfS」開始），z＝這台車在這一段的步調（分／公里）。 */
+  function kfUpdate(old, z, t) {
     const prior = 60 / defaultKmhAt(t);
-    let dev = 0, v = P.paceVar;
+    let dev = 0, v = P.kfS;
     if (old && old.var != null) {
-      const a = Math.exp(-(t - old.at) / 60e3 / P.paceTauMin);
-      dev = old.dev * a; v = old.var * a * a + P.paceVar * (1 - a * a);
+      const a = Math.exp(-(t - old.at) / 60e3 / P.kfTauMin);
+      dev = old.dev * a; v = old.var * a * a + P.kfS * (1 - a * a);
     }
-    const K = v / (v + P.paceNoise);                        // 增益：對現況越沒把握、單一台車的雜訊越小，越信這一台
-    return { at: t, dev: dev + K * (z - prior - dev), var: v * (1 - K), last: z };
+    const K = v / (v + P.kfR);
+    dev += K * (z - prior - dev); v *= 1 - K;
+    return { pace: prior + dev, at: t, dev, var: v };
   }
-  /** 這一段現在的步調（分／公里）：現在這個時段的預設車速，加上還沒退完的偏差。不會快過 maxKmh。 */
-  function paceNow(x, nowMs) {
-    return Math.max(60 / P.maxKmh, 60 / defaultKmhAt(nowMs) + x.dev * Math.exp(-(nowMs - x.at) / 60e3 / P.paceTauMin));
+  /** 卡爾曼版的分段步調：預設車速＋還沒退完的偏差。 */
+  function kfPace(x, nowMs) {
+    return Math.max(60 / P.maxKmh, 60 / defaultKmhAt(nowMs) + x.dev * Math.exp(-(nowMs - x.at) / 60e3 / P.kfTauMin));
   }
-  /** 直接指定一個分段在某個時刻的步調（完全確定）。測試用。 */
-  function paceState(pace, atMs) { return { at: atMs, dev: pace - 60 / defaultKmhAt(atMs), var: 0, last: pace }; }
 
   /** 營運中、定位新鮮、在路線上、還沒到終點的車。 */
   function activeBuses(tracker, id, nowMs) {
@@ -566,23 +524,23 @@
     return 60 / Math.min(P.maxKmh, Math.max(P.minKmh, kmh));
   }
   /**
-   * 從 k0 走到 k1 要幾分鐘：有車跑過的分段用濾波後的段速（paceNow），從來沒有車跑過的用 fallbackPace。
-   * 共用路段上，本變體與其他變體（含幫忙量路況的別條路線）的段速取「最近有車經過的那一邊」（例：西藏車少，借用莒光剛跑過的速度）。
-   * 試過把各邊合起來用（eval/candidates/core-fuse.js）：白天好 3～5%、夜間差 2～8%，沒有採用。
+   * 從 k0 走到 k1 要幾分鐘：有新鮮前車段速的分段用段速，其餘用 fallbackPace。
+   * 共用路段上，本變體與同方向其他變體的段速取「最新的那筆」（例：西藏車少，借用莒光剛跑過的速度）。
    * 回傳 coverage（有段速的比例）與 borrowed（其中借自其他變體的比例）。
    */
   function travelMin(ent, k0, k1, fallbackPace, nowMs) {
     if (k1 <= k0) return { min: 0, coverage: 1, borrowed: 0 };
-    const fresh = (x) => x && x.var != null;                  // 舊格式（升級前存在瀏覽器裡的）沒有 var：不用
+    const fresh = (x) => x && (P.kf ? x.var != null : nowMs - x.at <= P.paceFreshMin * 60e3);
+    const pace = (x) => (P.kf ? kfPace(x, nowMs) : x.pace);
     let min = 0, covered = 0, borrowed = 0;
     for (let b = Math.floor(k0 / P.binKm); b * P.binKm < k1; b++) {
       const s = Math.max(k0, b * P.binKm), e = Math.min(k1, (b + 1) * P.binKm), len = e - s;
-      let best = fresh(ent.bins[b]) ? { pace: paceNow(ent.bins[b], nowMs), at: ent.bins[b].at, own: true } : null;
+      let best = fresh(ent.bins[b]) ? { pace: pace(ent.bins[b]), at: ent.bins[b].at, own: true } : null;
       for (const sh of ent.shared || []) {
         const m = mapKm(sh.segs, (s + e) / 2);
         if (!m) continue;
         const ob = sh.ent.bins[Math.floor(m.km / P.binKm)];
-        if (fresh(ob) && (!best || ob.at > best.at)) best = { pace: paceNow(ob, nowMs) * m.ratio, at: ob.at, own: false };
+        if (fresh(ob) && (!best || ob.at > best.at)) best = { pace: pace(ob) * m.ratio, at: ob.at, own: false };
       }
       if (best) { min += best.pace * len; covered += len; if (!best.own) borrowed += len; }
       else min += fallbackPace * len;
@@ -932,7 +890,7 @@
 
   return { P, tpeParts, serviceDay, hhmmToMin, fmtTime, parseTpe, prepLine, project, parseBlobJson, indexEta, mergeEta, officialNext,
            distM, nearestPlatforms, nearestStops, searchRoutes, searchStops,
-           compass8, headingDiff, bayNo, positions, positionBar, unitKey, carryOver, splitRouteName, pickColor, helperRoutes, routeCompare,
-           tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, paceUpdate, paceNow, paceState, travelMin, roadAhead, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
+           compass8, headingDiff, bayNo, positions, positionBar, unitKey, carryOver, splitRouteName, pickColor, routeCompare,
+           tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, travelMin, roadAhead, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
            calibGroup, earliestMs, upcomingForBus, rideEstimate, tweenKm, planTween };
 });
