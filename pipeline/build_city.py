@@ -4,10 +4,10 @@
     python pipeline/build_city.py [--offline]
 
 輸出：
-    web/data/city-index.json            路線清單＋實體站牌（座標、哪些路線停、各自的站牌編號）
+    web/data/city-index.json            路線清單＋實體站牌（座標、哪些路線停、各自的站牌編號、行車方位、地址、月台）
     web/data/routes/<來源>-<路線>.json   每條路線的變體（站序、公里數、班距），使用者追蹤某條路線時才載入
 
-資料來自兩市的公車開放資料靜態檔（GetRoute、GetStop、GetPathDetail、GetBusShape），格式相同。
+資料來自兩市的公車開放資料靜態檔（GetRoute、GetStop、GetPathDetail、GetBusShape、GetStopLocation），格式相同。
 線型用路線軌跡（GetBusShape）：依站序逐站投影，每一站都落在軌跡 100 m 內、公里數不倒退才採用，並裁到這個變體實際行駛的區間。
 套不上的變體（繞駛線沒有自己的軌跡、環狀線方向判斷不了）退回「站與站之間的直線」近似（shapeApprox），公里數沿站點折線累計，彎道會略短。
 """
@@ -35,6 +35,14 @@ SHAPE_BACKTRACK_KM = 0.05      # 逐站投影容許的倒退（站牌在路口�
 SIMPLIFY_M = 4                 # 軌跡化簡的容許偏差：直線路段上多餘的點拿掉，檔案才不會太大
 HEADING_SPAN_KM = 0.1          # 站牌的行車方位：看離站後這麼長的一段路往哪個方位走
 HEADING_MIN_R = 0.85           # 會停這根站牌的各路線方位要夠一致（單位向量平均後的長度）才標；總站各路線出站方向不一，不標
+BAY_RE = re.compile(r"第(?:[一二三四五六七八九十]+|\d+)月台")
+# 地址開頭的縣市與行政區不寫（站名已經說了在哪一帶）。行政區用名單比對，不用「兩三個字加區」去猜：
+# 「茂林社區」「皇家特區」是地名的一部分，猜的話會被削掉。舊制的「新店市」「汐止市」資料裡還有，一併認得。
+ADDR_CITY_RE = re.compile(r"^(?:臺北市|台北市|新北市|北市|基隆市|桃園市|桃園縣|臺北縣|台北縣)")
+ADDR_DISTRICTS = ("中正 大同 中山 松山 大安 萬華 信義 士林 北投 內湖 南港 文山 "
+                  "板橋 三重 中和 永和 新莊 新店 樹林 鶯歌 三峽 淡水 汐止 瑞芳 土城 蘆洲 五股 泰山 林口 深坑 石碇 坪林 三芝 石門 八里 平溪 雙溪 貢寮 金山 萬里 烏來 "
+                  "仁愛 安樂 暖暖 七堵 桃園 中壢 大溪 楊梅 蘆竹 大園 龜山 八德 龍潭 平鎮 新屋 觀音 復興").split()
+ADDR_DISTRICT_RE = re.compile(r"^(?:" + "|".join(ADDR_DISTRICTS) + r")[區市鎮鄉](?=.)")
 
 
 def parse_wkt(wkt: str) -> list[tuple[float, float]]:
@@ -355,10 +363,34 @@ def pole_headings(files: dict) -> dict:
     return out
 
 
+def pole_bay(address: str | None) -> str:
+    """站牌地址裡寫的月台（「縣民大道公車專用月台第三月台(向東)」→「第三月台」）；沒有編號的月台（下客月台、接駁月台）不算，回傳空字串。"""
+    m = BAY_RE.search(address or "")
+    return m.group(0) if m else ""
+
+
+def short_address(address: str | None) -> str:
+    """站牌地址縮短成畫面上認得出是哪一根的寫法。
+
+    拿掉：括號裡的補充（「(向東)」只有四個方向、和實際行車方位對不上一半，不能當方位用）、開頭的縣市與行政區、
+    結尾的「同向」「路側」。「對面」「對向」留著——那是地址的一部分（在那個門牌的馬路對面）。
+    """
+    s = re.sub(r"[(（][^)）]*[)）]", "", address or "").strip()
+    s = ADDR_DISTRICT_RE.sub("", ADDR_CITY_RE.sub("", s))
+    return re.sub(r"(同向|路側)$", "", s).strip()
+
+
 def build_city(raw: dict[str, dict]) -> tuple[dict, dict]:
-    """raw: {來源: {"GetRoute": [...], "GetStop": [...], "GetPathDetail": [...]}} → (索引, {路線鍵: 路線檔})。"""
+    """raw: {來源: {"GetRoute": [...], "GetStop": [...], "GetPathDetail": [...]}} → (索引, {路線鍵: 路線檔})。
+
+    "GetBusShape"（路線軌跡）與 "GetStopLocation"（站牌地址）可以不給：沒有軌跡就用站間直線，沒有地址就留空。
+    """
     files, listing, plats = {}, [], {}
+    address: dict = {}                                # 站牌編號 → 地址（兩市共用的站牌以先讀到的為準）
     for src, d in raw.items():
+        for r in d.get("GetStopLocation") or []:
+            if r.get("address"):
+                address.setdefault(r["id"], r["address"])
         f, lst, pl = build_source(src, d["GetRoute"], d["GetStop"], d["GetPathDetail"], d.get("GetBusShape"))
         files.update(f)
         listing += lst
@@ -386,15 +418,20 @@ def build_city(raw: dict[str, dict]) -> tuple[dict, dict]:
     listing.sort(key=lambda r: (r["name"], r["key"]))
     idx_of = {r["key"]: i for i, r in enumerate(listing)}
     headings = pole_headings(files)
+
+    def plat_row(p: dict) -> list:
+        row = [p["id"], p["name"], p["lat"], p["lon"], [[idx_of[k], g, sid] for k, g, sid in p["entries"]],
+               headings.get(p["id"], -1), short_address(address.get(p["id"]))]
+        bay = pole_bay(address.get(p["id"]))
+        return row + [bay] if bay else row
+
     index = {
-        "schema": 2, "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "schema": 3, "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "sources": {s: {"name": BLOB_SOURCES[s]["name"], "base": f"{BLOB_HOST}{BLOB_SOURCES[s]['container']}/"} for s in raw},
         # 精簡成陣列以縮小檔案：路線 [鍵, 名稱, 來源, 主路線編號, 起點, 終點]；
-        # 站牌 [編號, 站名, 緯度, 經度, [[路線序號, 方向, 站牌編號]...], 行車方位（度；各路線不一致時 -1）]
+        # 站牌 [編號, 站名, 緯度, 經度, [[路線序號, 方向, 站牌編號]...], 行車方位（度；各路線不一致時 -1）, 短地址（沒有就空字串）, 月台（有才有這一欄）]
         "routes": [[r["key"], r["name"], r["src"], r["routeId"], r["dep"], r["dest"]] for r in listing],
-        "plats": [[p["id"], p["name"], p["lat"], p["lon"], [[idx_of[k], g, sid] for k, g, sid in p["entries"]],
-                   headings.get(p["id"], -1)]
-                  for p in sorted(plats.values(), key=lambda p: p["id"])],
+        "plats": [plat_row(p) for p in sorted(plats.values(), key=lambda p: p["id"])],
     }
     return index, files
 
@@ -408,7 +445,7 @@ def main() -> None:
     raw, notes = {}, []
     for src in a.sources.split(","):
         raw[src] = {}
-        for name in ("GetRoute", "GetStop", "GetPathDetail", "GetBusShape"):
+        for name in ("GetRoute", "GetStop", "GetPathDetail", "GetBusShape", "GetStopLocation"):
             raw[src][name], info = blob.get(src, name)
             notes.append(f"{src} {name}：{len(raw[src][name])} 筆（{info['note']}，資料更新 {info['updateTime']}）")
     index, files = build_city(raw)
@@ -433,6 +470,7 @@ def main() -> None:
     nvar = sum(len(f["variants"]) for f in files.values())
     print(f"路線 {len(files)} 條（{nvar} 個變體）→ web/data/routes/（共 {total // 1024} KB）")
     print(f"實體站牌 {len(index['plats'])} 根、停靠 {sum(len(p[4]) for p in index['plats'])} 筆 → web/data/city-index.json（{ipath.stat().st_size // 1024} KB）")
+    print(f"站牌有地址的 {sum(1 for p in index['plats'] if p[6])} 根、地址寫了月台的 {sum(1 for p in index['plats'] if len(p) > 7)} 根")
     for src in raw:
         vs = [v for f in files.values() if f["src"] == src for v in f["variants"]]
         approx = sum(1 for v in vs if v.get("shapeApprox"))

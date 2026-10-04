@@ -50,7 +50,6 @@ h1 { font-size: 16px; margin: 0; white-space: nowrap; }
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #view-wait { overflow-anchor: none; }
-#view-wait .wrap { padding-bottom: 170px; }           /* 底下留空：按「關注」後上面多一列，頁面要還能往下捲那麼多，被按的那一列才留得住 */                  /* 按「關注」後自己把那一列捲回手指下；瀏覽器內建的對位在最頂端不作用、其他時候又會重複算 */
 .wrap { max-width: 860px; margin: 0 auto; padding: 12px 12px 28px; }
 .tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
 .tabs button { background: none; border: 0; color: var(--ink-3); padding: 7px 2px 8px; font-size: 11.5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; white-space: nowrap; }
@@ -111,7 +110,7 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .pop .arow[data-bus]::after { content: none; }
 
 /* 資料超過 90 秒沒更新（斷線、暫停）：數字變淡 */
-.old-data #leave, .old-data #board, .old-data #allList, .old-data #sheetBody .arows { opacity: .5; }
+.old-data #leave, .old-data #board, .old-data #pickList, .old-data #sheetBody .arows { opacity: .5; }
 
 /* ---------- 等車：地點、出門提醒、每條關注的路線一列 ---------- */
 .seg.places { flex: 1 1 auto; min-width: 0; }
@@ -133,8 +132,26 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .leave.ask svg { flex: none; width: 20px; height: 20px; fill: currentColor; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .road.slow { color: var(--warn); }
 .road.jam { color: var(--bad); }
-.sec { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
-.sec-cap { margin: 0 2px -2px; font-size: 12px; color: var(--ink-2); }
+/* 候車位置那一排：左邊位置（文字、分頁或選單），最右邊「選路線」 */
+.posrow { position: relative; z-index: 5; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 10px; }
+.posrow .seg.dirs { margin: 0; }
+.seg.dirs.postabs button { min-height: 40px; padding: 4px 4px; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.postabs .caret { display: inline-block; margin-left: 4px; border: 4px solid transparent; border-top: 5px solid currentColor; border-bottom: 0; vertical-align: middle; }
+.posplain { min-width: 0; min-height: 48px; display: flex; align-items: center; padding: 0 4px; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.posdrop { min-width: 0; min-height: 48px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 0 12px; border: 1px solid var(--ink-3); border-radius: 14px; background: var(--surface); cursor: pointer; text-align: left; font-size: 14px; font-weight: 700; }
+.posdrop span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.posdrop svg { width: 16px; height: 16px; fill: none; stroke: var(--ink-2); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.pickbtn { min-height: 48px; padding: 0 14px; border: 1px solid var(--ink); border-radius: 14px; background: var(--ink); color: var(--bg); cursor: pointer; font-size: 14px; font-weight: 700; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.pickbtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.posmenu { position: absolute; left: 0; right: 0; top: calc(100% + 6px); max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--ink-3); border-radius: 14px; box-shadow: 0 12px 28px rgba(0, 0, 0, .35); }
+.posmenu button { flex: none; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 52px; padding: 6px 12px; border: 0; border-bottom: 1px solid var(--line); background: none; cursor: pointer; text-align: left; }
+.posmenu button:last-child { border-bottom: 0; }
+.posmenu button[aria-checked="true"] { background: var(--surface-2); font-weight: 700; }
+.posmenu i { width: 8px; height: 8px; border-radius: 50%; }
+.posmenu i.on { background: var(--ink); }                        /* 有關注路線的位置 */
+.posmenu span { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.posmenu small { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+#board { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .rt { background: var(--surface); border: 2px solid var(--line); border-radius: 14px; overflow: hidden; }
 .rt.hot { border-color: var(--ink); }                       /* 最快到的那一列：外框加深（列的順序不隨到站時間變，不然手指要按的那一列會跑掉） */
 .rt-main { width: 100%; border: 0; background: transparent; cursor: pointer; text-align: left; padding: 10px 12px; min-height: 84px; display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
@@ -149,20 +166,26 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .rt-later b { font-size: 19px; font-weight: 700; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rt-more { border-top: 1px solid var(--line); }
 .rt-more .arow:first-child { border-top: 0; }
-.rt-acts { display: flex; justify-content: flex-end; padding: 6px 12px 10px; border-top: 1px solid var(--line); }
+.rt-acts { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 6px 12px 10px; border-top: 1px solid var(--line); }
+.rt-last { margin-right: auto; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .rt-acts .btn { min-height: 44px; border-radius: 10px; font-size: 13px; font-weight: 700; background: var(--surface); }
-/* 收起來的一段（對面站牌）與「這一站的全部路線」的標題列 */
-.sec-h { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; min-height: 56px; padding: 6px 12px; cursor: pointer; }
-.sec-h > span:first-child { min-width: 0; }
-.sec-h b { display: block; font-size: 14px; }
-.sec-h small { display: block; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sec-r { text-align: right; white-space: nowrap; }
 .sec-r b { font-size: 13px; }
-.promote { align-self: flex-end; min-height: 40px; }
-.all { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 4px 0 12px; }
-.all > .sec-h { border: 0; border-radius: 0; min-height: 48px; }
-.flt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+/* 「選路線」面板：從底下升上來，蓋住整個畫面（含底下的分頁列）；只列現在這個候車位置的路線 */
+.picker { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; justify-content: flex-end; }
+.picker-bg { position: absolute; inset: 0; border: 0; background: rgba(4, 8, 18, .55); cursor: pointer; }
+.picker-box { position: relative; width: 100%; max-width: 560px; height: 80%; margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border-radius: 18px 18px 0 0; box-shadow: 0 -8px 28px rgba(0, 0, 0, .4); padding-bottom: env(safe-area-inset-bottom); }
+.picker-h { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--line); }
+.picker-h > div { min-width: 0; }
+.picker-h b { display: block; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picker-h small { display: block; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picker-h .btn { min-height: 44px; border-radius: 12px; padding: 0 16px; font-size: 14px; }
+.picker-list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.picker-list .all-row:first-child { border-top: 0; }
+.flt { flex: none; padding: 8px 16px; border-bottom: 1px solid var(--line); }
 .flt input { width: 100%; min-height: 44px; border: 1px solid var(--ink-3); border-radius: 10px; padding: 0 12px; font-size: 16px; background: var(--surface); color: var(--ink); }
+#pickFoot { flex: none; padding: 0 8px; border-top: 1px solid var(--line); }
+#pickFoot:empty { display: none; }
 .all-g { margin: 0; padding: 7px 12px 6px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); background: var(--surface-2); border-top: 1px solid var(--line); }
 .all-row { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; min-height: 54px; padding: 4px 8px 4px 12px; border-top: 1px solid var(--line); }
 .all-row .to { font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -172,13 +195,16 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .all-row .eta small { display: block; font-weight: 400; font-size: 11px; color: var(--ink-3); }
 .wbtn { min-height: 44px; min-width: 66px; border: 1px solid var(--ink); border-radius: 10px; background: var(--surface); font-size: 13px; font-weight: 700; cursor: pointer; }
 .wbtn[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
-#allFoot { padding: 0 8px; }
-#allFoot:empty { display: none; }
 #geoNote { margin: 0 2px 4px; }
 #geoNote .link { padding: 2px 4px; }
 .credit { margin: 10px 2px 0; }                       /* 資料來源：開放資料的授權要求標示提供機關 */
 /* 很窄的手機（寬 360 以下）：路線牌與按鈕縮一點，往哪裡與幾分才不會被截掉 */
 @media (max-width: 360px) {
+  .posrow { gap: 6px; }                                      /* 三個月台分頁＋「選路線」要排得下：按鈕不放圖示、分頁字縮一點 */
+  .pickbtn { padding: 0 10px; }
+  .pickbtn svg { display: none; }
+  .seg.dirs.postabs button { font-size: 13px; padding: 4px 1px; }
+  .postabs .caret { margin-left: 2px; }
   .rt-main { grid-template-columns: 86px minmax(0, 1fr) auto; gap: 8px; padding: 10px; }
   .big { font-size: 36px; }
   .rt-later b { font-size: 16px; }
@@ -222,7 +248,7 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .rp-h b { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-h small { display: block; font-size: 12px; color: var(--ink-2); }
 .seg.dirs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; width: 100%; border-radius: 14px; padding: 4px; margin-bottom: 10px; }
-.seg.dirs button { min-height: 44px; border-radius: 10px; font-weight: 700; white-space: normal; }
+.seg.dirs button { min-height: 44px; border-radius: 10px; font-weight: 700; white-space: normal; padding-left: 8px; padding-right: 8px; }
 #routePage .hint { margin: 0 2px 8px; }
 
 /* ---------- 地圖＋底下的清單 ---------- */
@@ -300,9 +326,19 @@ input[type="search"] { flex: 1; min-width: 140px; }
 }
 
 /* ---------- 路線條狀圖 ---------- */
+/* 路線與方向留在頂端：條狀圖會自己捲到目前地點的那一站，捲下去之後還是要看得到現在是哪條路線、哪個方向 */
+.routebar { position: sticky; top: 0; z-index: 3; margin: -12px -12px 6px; padding: 12px 12px 8px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.routebar .bar { margin-bottom: 8px; }
+.routebar .bar:last-child, .routebar .seg.dirs { margin-bottom: 0; }
+#view-marey .seg.dirs { margin-bottom: 10px; }
 .strip { list-style: none; margin: 0; padding: 0; }
-.stop { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr) 40px; align-items: center; gap: 0 10px; padding: 6px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 60px; }
+.stop { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr) 40px; align-items: center; gap: 0 10px; padding: 6px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 130px; }
 .stop.flash { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.stop.mine { background: var(--surface-2); }                 /* 目前地點的那一站 */
+.stop.mine .sname b { font-weight: 800; }
+.stop.mine .rail .dot { border-color: var(--ink); background: var(--ink); }
+.stop.can-ride { cursor: pointer; }                          /* 這個地點之後的站：點一下看從這裡搭過去的車程 */
+.ride { display: flex; align-items: center; gap: 5px; margin-top: 1px; font-size: 12.5px; font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rail { position: relative; align-self: stretch; }
 .rail::before { content: ""; position: absolute; left: 9px; top: -7px; bottom: -7px; width: 4px; background: var(--line); border-radius: 2px; }
 .rail .dot { position: absolute; left: 4px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; background: var(--bg); border: 3px solid var(--ink-2); }

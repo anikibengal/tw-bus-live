@@ -682,32 +682,141 @@ test("八方位與方位差", () => {
   assert.deepEqual([[10, 350], [350, 10], [0, 180], [104, 291], [90, 90], [200, 20]].map(([a, b]) => C.headingDiff(a, b)), [20, 20, 180, 173, 0, 180]);
 });
 
-test("站牌依行車方位分段：同方向的併成一段、對面另成一段、方位不明的各自一段", () => {
+// ---------------------------------------------------------------- 候車位置
+const PLAT = 25.0465, PLON = 121.52, PM = 1 / 110540;                     // 往北 1 公尺是多少緯度
+/** 一根站牌：編號、行車方位、在基準點北方幾公尺；其餘欄位（bay、addr、units）放 extra。 */
+const pole = (id, heading, northM = 0, extra = {}) => ({ id, heading, lat: PLAT + northM * PM, lon: PLON, ...extra });
+const groupsOf = (ps) => C.positions(ps).map((x) => x.ids);
+const labelsOf = (ps) => C.positions(ps).map((x) => x.label);
+
+test("月台編號：國字與數字都認得，不是月台名回傳 null", () => {
+  assert.deepEqual(["第一月台", "第三月台", "第九月台", "第十月台", "第十二月台", "第二十月台", "第二十三月台", "第9月台", "第12月台"].map(C.bayNo), [1, 3, 9, 10, 12, 20, 23, 9, 12]);
+  assert.deepEqual(["", null, undefined, "下客月台", "第月台", "第一二月台", "第三月台旁", "月台", "第十十月台"].map(C.bayNo), [null, null, null, null, null, null, null, null, null]);
+});
+
+test("候車位置：馬路兩側各一個，順序照方位（北→西北），和傳入順序無關", () => {
   // 國泰街口：往東 104 度、往西 291 度
-  assert.deepEqual(C.headingSections([{ id: "東", heading: 104 }, { id: "西", heading: 291 }]),
-    [{ ids: ["東"], heading: 104, opposite: false }, { ids: ["西"], heading: 291, opposite: true }]);
-  // 順序照傳入的順序：先給西，西就是第一段
-  assert.deepEqual(C.headingSections([{ id: "西", heading: 291 }, { id: "東", heading: 104 }]).map((s) => [s.ids[0], s.opposite]), [["西", false], ["東", true]]);
-  // 捷運西門站：往南的站牌有兩根（195、195），往北的兩根（14、15）；同方向併成一段
-  const ximen = C.headingSections([{ id: "南1", heading: 195 }, { id: "北1", heading: 14 }, { id: "南2", heading: 195 }, { id: "北2", heading: 15 }]);
-  assert.deepEqual(ximen.map((s) => [s.ids, s.opposite]), [[["南1", "南2"], false], [["北1", "北2"], true]]);
-  // 差 45 度以內算同方向（含正北兩側 350 與 20）；差 46 度就分開，但不到 135 度不叫對面
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 350 }, { id: "b", heading: 35 }]).map((s) => s.ids), [["a", "b"]]);
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 350 }, { id: "b", heading: 36 }]).map((s) => [s.ids, s.opposite]), [[["a"], false], [["b"], false]]);
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 0 }, { id: "b", heading: 134 }]).map((s) => s.opposite), [false, false]);
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 0 }, { id: "b", heading: 135 }]).map((s) => s.opposite), [false, true]);
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 0 }, { id: "b", heading: 225 }]).map((s) => s.opposite), [false, true], "從另一側量也是 135 度");
-  // 方位不明：各自一段，不和任何一段併，也不叫對面；方位 0（正北）不是「不明」
-  const mixed = C.headingSections([{ id: "甲", heading: null }, { id: "乙", heading: null }, { id: "丙", heading: 0 }, { id: "丁", heading: 10 }, { id: "戊", heading: 180 }]);
-  assert.deepEqual(mixed.map((s) => [s.ids, s.opposite]), [[["甲"], false], [["乙"], false], [["丙", "丁"], false], [["戊"], false]]);
-  assert.deepEqual(C.headingSections([{ id: "北", heading: 0 }, { id: "南", heading: 180 }])[1].opposite, true);
-  // 方位不明的站牌排在往北的站牌後面：不能因為「不明」被當成 0 度就併進去
-  assert.deepEqual(C.headingSections([{ id: "北", heading: 0 }, { id: "不明", heading: null }]).map((s) => s.ids), [["北"], ["不明"]]);
-  // 「對面」是和第一段比，不是和前一段比
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 0 }, { id: "b", heading: 90 }, { id: "c", heading: 180 }]).map((s) => s.opposite), [false, false, true]);
-  // 同一根站牌重複給（一根站牌上關注了好幾條路線）：只算一次
-  assert.deepEqual(C.headingSections([{ id: "東", heading: 104 }, { id: "東", heading: 104 }, { id: "西", heading: 291 }]).map((s) => s.ids), [["東"], ["西"]]);
-  assert.deepEqual(C.headingSections([]), []);
+  const east = pole("6186", 104, 0, { addr: "民族路290號" }), west = pole("2688", 291, 20, { addr: "民族路261號" });
+  const want = [{ id: "6186", ids: ["6186"], heading: 104, bay: "", addr: "民族路290號", label: "往東", long: "往東・民族路290號" },
+                { id: "2688", ids: ["2688"], heading: 291, bay: "", addr: "民族路261號", label: "往西", long: "往西・民族路261號" }];
+  assert.deepEqual(C.positions([east, west]), want);
+  assert.deepEqual(C.positions([west, east]), want, "先給西也一樣：往東排前面");
+  assert.deepEqual(C.positions([]), []);
+  // 同一根站牌重複給：只算一次
+  assert.deepEqual(groupsOf([east, east, west]), [["6186"], ["2688"]]);
+  // 編號給數字也可以，回傳一律是字串（存起來的「上次看的位置」是字串，要對得上）
+  assert.deepEqual(C.positions([{ ...east, id: 6186 }, { ...west, id: 2688 }]).map((x) => [x.id, x.ids]), [["6186", ["6186"]], ["2688", ["2688"]]]);
+});
+
+test("候車位置：方位差 45 度以內、相隔 80 公尺以內才併，而且要和那一組的每一根都合", () => {
+  // 方位：差 45 度以內算同方向（含正北兩側 350 與 35）；差 46 度就分開
+  assert.deepEqual(groupsOf([pole("1", 350), pole("2", 35)]), [["1", "2"]]);
+  assert.deepEqual(groupsOf([pole("1", 350), pole("2", 36)]), [["1"], ["2"]]);
+  // 距離：門檻 80 公尺
+  assert.deepEqual(groupsOf([pole("1", 90, 0), pole("2", 90, 79.5)]), [["1", "2"]]);
+  assert.deepEqual(groupsOf([pole("1", 90, 0), pole("2", 90, 80.5)]), [["1"], ["2"]]);
+  // 行政院：往撫遠街的站牌 179 度、往板橋的 216 度，方位只差 37 度，但相隔約 250 公尺 → 兩個位置
+  assert.deepEqual(groupsOf([pole("1", 179, 0), pole("2", 216, 250)]), [["1"], ["2"]]);
+  // 一長排站牌（0、60、120 公尺）：第三根離第一根 120 公尺，不能因為離第二根近就一路串下去
+  assert.deepEqual(groupsOf([pole("1", 90, 0), pole("2", 90, 60), pole("3", 90, 120)]), [["1", "2"], ["3"]]);
+  // 方位也一樣：0、40、80 度，第三根和第一根差 80 度
+  assert.deepEqual(groupsOf([pole("1", 0, 0), pole("2", 40, 5), pole("3", 80, 10)]), [["1", "2"], ["3"]]);
+  // 沒給座標：只看方位（測試資料、索引讀不到時）
+  assert.deepEqual(groupsOf([{ id: "1", heading: 90 }, pole("2", 90, 500)]), [["1", "2"]]);
+  assert.deepEqual(groupsOf([pole("1", 90, 0), { id: "2", heading: 90 }]), [["1", "2"]], "後面那根沒座標也一樣");
+});
+
+test("候車位置：結果和傳入的順序無關（先照站牌編號排再分組）", () => {
+  const ps = [pole("30", 90, 120), pole("10", 90, 0), pole("20", 90, 60), pole("40", 270, 10), pole("5", null, 0, { addr: "總站" })];
+  const want = JSON.stringify(C.positions(ps));
+  const perms = [[0, 1, 2, 3, 4], [4, 3, 2, 1, 0], [2, 0, 4, 1, 3], [1, 2, 0, 4, 3], [3, 4, 0, 2, 1]];
+  for (const pm of perms) assert.equal(JSON.stringify(C.positions(pm.map((i) => ps[i]))), want, pm.join(""));
+  assert.deepEqual(C.positions(ps).map((x) => x.ids), [["10", "20"], ["30"], ["40"], ["5"]], "編號小的先分組；方位不明的排最後");
+  // 編號照數字排（9 在 10 前面），不是照字元
+  assert.deepEqual(groupsOf([pole("10", 90, 0), pole("9", 90, 60), pole("100", 90, 120)]), [["9", "10"], ["100"]]);
+});
+
+test("候車位置：同一條路線去程停這根、返程停那根，方位再接近也不併", () => {
+  // 折返點：兩根站牌算出來都往北、相隔 20 公尺，但 307 的去程停甲、返程停乙
+  const a = pole("1", 0, 0, { units: ["tpe:16111|0", "tpe:10482|0"] }), b = pole("2", 10, 20, { units: ["tpe:16111|1"] });
+  assert.deepEqual(groupsOf([a, b]), [["1"], ["2"]]);
+  // 同一條路線同方向停兩根（大站同方向的兩根站牌）、或兩根沒有共同的路線：照方位與距離併
+  assert.deepEqual(groupsOf([a, pole("2", 10, 20, { units: ["tpe:16111|0"] })]), [["1", "2"]]);
+  assert.deepEqual(groupsOf([a, pole("2", 10, 20, { units: ["tpe:99999|1"] })]), [["1", "2"]]);
+  assert.deepEqual(groupsOf([a, pole("2", 10, 20)]), [["1", "2"]], "沒給路線就不比");
+  // 路線鍵要整個相同才算同一條：tpe:1611 和 tpe:16111 不是同一條
+  assert.deepEqual(groupsOf([a, pole("2", 10, 20, { units: ["tpe:1611|1"] })]), [["1", "2"]]);
+  // 和這一組的每一根比：第三根和第二根對向，就不能進這一組
+  const c = pole("3", 5, 10, { units: ["tpe:10482|1"] });
+  assert.deepEqual(groupsOf([a, pole("2", 10, 20, { units: ["tpe:500|0"] }), c]), [["1", "2"], ["3"]]);
+});
+
+test("候車位置：地址寫的月台不同就不併，順序照月台編號", () => {
+  // 板橋公車站：四個月台出站都往西北、彼此相隔十幾公尺；新府路那一根（沒有月台）在第三月台旁邊
+  const ps = [pole("2673", 320, 0, { bay: "第三月台", addr: "縣民大道公車專用月台第三月台" }), pole("70620", null, 30, { bay: "第四月台" }),
+              pole("70716", 326, 10, { bay: "第一月台" }), pole("70717", 337, 20, { bay: "第二月台" }),
+              pole("70667", 306, 5, { addr: "板橋火車站西側門" }), pole("70666", 127, 40, { addr: "板橋火車站西側門對面" })];
+  const pos = C.positions(ps);
+  assert.deepEqual(pos.map((x) => [x.label, x.ids]), [["第一月台", ["70716"]], ["第二月台", ["70717"]], ["第三月台", ["2673", "70667"]], ["第四月台", ["70620"]], ["往東南", ["70666"]]]);
+  assert.deepEqual(pos.map((x) => x.long), ["第一月台", "第二月台", "第三月台", "第四月台", "往東南・板橋火車站西側門對面"]);
+  assert.equal(pos[2].heading, 313, "一組的方位是各根的平均");
+  assert.equal(pos[3].heading, null, "方位不明的月台照樣照編號排，不排到最後");
+  // 沒有月台的站牌可以併進某個月台（同方位、夠近），那一組就叫那個月台
+  assert.deepEqual(C.positions([pole("1", 90, 0, { addr: "路邊" }), pole("2", 90, 10, { bay: "第二月台" })]).map((x) => [x.label, x.ids]), [["第二月台", ["1", "2"]]]);
+  // 一組的地址取第一根「有地址」的站牌，不是第一根站牌
+  assert.deepEqual(C.positions([pole("1", 90, 0), pole("2", 90, 10, { addr: "乙路2號" })]).map((x) => [x.addr, x.long]), [["乙路2號", "往東・乙路2號"]]);
+  // 同一個月台的兩根站牌：併
+  assert.deepEqual(groupsOf([pole("1", 90, 0, { bay: "第一月台" }), pole("2", 90, 10, { bay: "第一月台" })]), [["1", "2"]]);
+  // 月台編號照數字排：第 10 月台在第 2 月台後面
+  assert.deepEqual(labelsOf([pole("1", 0, 0, { bay: "第10月台" }), pole("2", 0, 10, { bay: "第2月台" }), pole("3", 0, 20, { bay: "第1月台" })]), ["第1月台", "第2月台", "第10月台"]);
+});
+
+test("候車位置的標籤：方位在這個地點只有一組才寫方位，不然寫短地址；撞名的加編號", () => {
+  // 捷運西門站：往北三個、往南兩個 → 都寫地址；完整寫法帶方位
+  const ximen = C.positions([pole("1793", 14, 0, { addr: "中華路一段上公車專用道近寶慶路" }), pole("4608", 195, 300, { addr: "中華路一段166號" }),
+                             pole("50040", 15, 600, { addr: "中華路一段台北憲兵隊前" }), pole("1000079", 195, 900, { addr: "中華路一段公車專用道" })]);
+  assert.deepEqual(ximen.map((x) => x.label), ["中華路一段上公車專用道近寶慶路", "中華路一段台北憲兵隊前", "中華路一段166號", "中華路一段公車專用道"]);
+  assert.equal(ximen[0].long, "往北・中華路一段上公車專用道近寶慶路");
+  // 兩個往北、一個往南：往南只有一組，寫方位
+  assert.deepEqual(labelsOf([pole("1", 0, 0, { addr: "甲路1號" }), pole("2", 0, 300, { addr: "乙路2號" }), pole("3", 180, 0, { addr: "丙路3號" })]), ["甲路1號", "乙路2號", "往南"]);
+  // 月台不算進「這個方位有幾組」：月台往西北，另有一根往西北的站牌，後者照樣寫「往西北」
+  assert.deepEqual(labelsOf([pole("1", 315, 0, { bay: "第一月台" }), pole("2", 315, 300, { addr: "路口" })]), ["第一月台", "往西北"]);
+  // 350 度與 10 度的平均是正北（不是 180）
+  assert.deepEqual(C.positions([pole("1", 350, 0), pole("2", 10, 10)]).map((x) => [x.heading, x.label]), [[0, "往北"]]);
+  // 方位不明：寫地址；連地址也沒有：站牌 N（N＝在這個地點排第幾個）
+  assert.deepEqual(labelsOf([pole("1", 90, 0), pole("2", null, 0, { addr: "總站內" }), pole("3", null, 0)]), ["往東", "總站內", "站牌 3"]);
+  // 同方位、地址又相同（或都沒有地址）：加編號才分得開，短標籤與完整寫法都要分得開
+  const same = C.positions([pole("1", 0, 0, { addr: "山路門口" }), pole("2", 0, 300, { addr: "山路門口" })]);
+  assert.deepEqual(same.map((x) => [x.label, x.long]), [["山路門口 1", "往北・山路門口 1"], ["山路門口 2", "往北・山路門口 2"]]);
+  assert.deepEqual(labelsOf([pole("1", 0, 0), pole("2", 0, 300)]), ["往北 1", "往北 2"]);
+  // 回傳的欄位就這幾個（分組時用的暫存欄位不外流）
+  assert.deepEqual(Object.keys(C.positions([pole("1", 90)])[0]).sort(), ["addr", "bay", "heading", "id", "ids", "label", "long"]);
+});
+
+test("候車位置那一排的排法：文字、全部分頁、有關注的做分頁＋其他、整個用選單", () => {
+  const mk = (...labels) => labels.map((label, i) => ({ id: String(i + 1), label }));
+  const shape = (pos, watched) => { const b = C.positionBar(pos, watched); return [b.mode, b.tabs.map((p) => p.id), b.rest.map((p) => p.id)]; };
+  assert.deepEqual(shape(mk("往東"), []), ["plain", [], []]);
+  assert.deepEqual(shape([], []), ["plain", [], []]);
+  assert.deepEqual(shape(mk("往東", "往西"), []), ["tabs", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往東", "往西"), ["2"]), ["tabs", ["1", "2"], []], "分頁順序不隨關注變");
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), []), ["tabs", ["1", "2", "3"], []]);
+  // 四個以上：沒有關注時整個用選單；有關注的（最多兩個）做成分頁，其餘收進「其他」
+  assert.deepEqual(shape(mk("第一月台", "第二月台", "第三月台", "第四月台"), []), ["drop", [], ["1", "2", "3", "4"]], "四個分頁加上「選路線」排不下");
+  const bays = mk("第一月台", "第二月台", "第三月台", "第四月台", "往東南");
+  assert.deepEqual(shape(bays, []), ["drop", [], ["1", "2", "3", "4", "5"]]);
+  assert.deepEqual(shape(bays, ["3"]), ["more", ["3"], ["1", "2", "4", "5"]]);
+  assert.deepEqual(shape(bays, ["3", "1"]), ["more", ["1", "3"], ["2", "4", "5"]], "照位置的固定順序，不是照關注的先後");
+  assert.deepEqual(shape(bays, ["5", "3", "1"]), ["more", ["1", "3"], ["2", "4", "5"]], "第三個有關注的位置收進其他");
+  assert.deepEqual(shape(bays, ["9"]), ["drop", [], ["1", "2", "3", "4", "5"]], "不存在的位置不算有關注");
+  // 標籤是地址（超過 5 個字）：分頁放不下
+  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), []), ["drop", [], ["1", "2"]]);
+  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["1"]), ["more", ["1"], ["2"]], "有關注的那個標籤短：它做分頁");
+  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["2"]), ["drop", [], ["1", "2"]], "有關注的那個標籤是地址：整個用選單");
+  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["1", "2"]), ["drop", [], ["1", "2"]]);
+  // 5 個字算短（第12月台），6 個字算長
+  assert.deepEqual(shape(mk("第12月台", "往東"), [])[0], "tabs");
+  assert.deepEqual(shape(mk("第123月台", "往東"), [])[0], "drop");
 });
 
 test("關注的單位鍵對得上全市索引；路線名拆成號碼與後綴；路線名照數字排", () => {
@@ -739,21 +848,107 @@ test("打開新的站：帶入別的站已經關注、這裡也有停的路線�
   assert.deepEqual(C.carryOver({}, ["265|0"], null), []);
 });
 
-test("分段還要看距離：同名但隔了一兩個路口的站牌不併，相隔十幾公尺的才併", () => {
-  const LAT = 25.0465, LON = 121.52, M = 1 / 110540;                     // 往北 1 公尺是多少緯度
-  const pole = (id, heading, northM) => ({ id, heading, lat: LAT + northM * M, lon: LON });
-  // 行政院：往撫遠街的站牌 179 度、往板橋的 216 度，方位只差 37 度，但相隔約 250 公尺 → 兩段，而且不叫對面
-  assert.deepEqual(C.headingSections([pole("撫遠街", 179, 0), pole("板橋", 216, 250)]).map((s) => [s.ids, s.opposite]), [[["撫遠街"], false], [["板橋"], false]]);
-  // 捷運西門站：往南的兩根相隔 17 公尺 → 併成一段
-  assert.deepEqual(C.headingSections([pole("南1", 195, 0), pole("南2", 195, 17)]).map((s) => s.ids), [["南1", "南2"]]);
-  // 門檻 80 公尺（含）
-  assert.deepEqual(C.headingSections([pole("a", 90, 0), pole("b", 90, 79)]).map((s) => s.ids), [["a", "b"]]);
-  assert.deepEqual(C.headingSections([pole("a", 90, 0), pole("b", 90, 81)]).map((s) => s.ids), [["a"], ["b"]]);
-  // 一長排站牌：離這一段裡任何一根夠近就算（a–b 60 m、b–c 60 m、a–c 120 m）
-  assert.deepEqual(C.headingSections([pole("a", 90, 0), pole("b", 90, 60), pole("c", 90, 120)]).map((s) => s.ids), [["a", "b", "c"]]);
-  // 回傳的段不帶座標（只給畫面用得到的欄位）
-  assert.deepEqual(Object.keys(C.headingSections([pole("a", 90, 0)])[0]).sort(), ["heading", "ids", "opposite"]);
-  // 沒給座標：只看方位（重播、測試資料）
-  assert.deepEqual(C.headingSections([{ id: "a", heading: 90 }, pole("b", 90, 500)]).map((s) => s.ids), [["a", "b"]]);
-  assert.deepEqual(C.headingSections([pole("a", 90, 0), { id: "b", heading: 90 }]).map((s) => s.ids), [["a", "b"]], "後面那根沒座標也一樣");
+// ---------------------------------------------------------------- 搭到某一站要多久
+test("車程：下一班的那台車兩站都推得到時，兩站的推估時刻相減", () => {
+  // 車在 1 km，預設 18 km/h（每公里 3 分 20 秒）：到第 3 站 09:06:40、到第 6 站 09:16:40
+  const tr = trackerWith([["09:00", [fix("A", 1, "09:00")]]]);
+  const R = C.routeArrivals(tr, "900|0", null, T("09:00"));
+  const e = C.rideEstimate(tr, "900|0", R, 3, 6, T("09:00"));
+  assert.equal(e.bus, "A");
+  assert.ok(Math.abs(e.min - 10) < 0.01, `車程 ${e.min}`);
+  assert.equal(e.boardMs, R.perStop[3][0].ms);
+  assert.equal(e.arriveMs, R.perStop[6].find((a) => a.bus === "A").ms);
+  assert.equal(e.coverage, 0, "還沒有前車跑過這一段");
+  // 官方預估算在裡面：官方說 3 分鐘後到第 3 站（比推算的早），第 6 站從那裡接著推
+  const R2 = C.routeArrivals(tr, "900|0", etaOf("09:00", [[3, 180]]), T("09:00"));
+  const e2 = C.rideEstimate(tr, "900|0", R2, 3, 6, T("09:00"));
+  assert.equal(C.fmtTime(e2.boardMs), "09:03");
+  assert.ok(Math.abs(e2.min - 10) < 0.01);
+  assert.equal(C.fmtTime(e2.arriveMs), "09:13");
+});
+
+test("車程：搭的是「下一班到上車站」的那台，不是離下車站最近的那台", () => {
+  // 甲在 5 km（已過第 3 站）、乙在 1 km：從第 3 站上車搭的是乙
+  const tr = trackerWith([["09:00", [fix("甲", 5, "09:00"), fix("乙", 1, "09:00")]]]);
+  const R = C.routeArrivals(tr, "900|0", null, T("09:00"));
+  assert.equal(R.perStop[6][0].bus, "甲", "第 6 站的下一班是甲");
+  const e = C.rideEstimate(tr, "900|0", R, 3, 6, T("09:00"));
+  assert.equal(e.bus, "乙");
+  assert.equal(e.arriveMs, R.perStop[6].find((a) => a.bus === "乙").ms);
+  assert.ok(e.arriveMs > R.perStop[6][0].ms);
+});
+
+test("車程：沒有車可以對（未發車、沒定位、超出推估範圍）時用前車段速，沒量到的分段用預設車速", () => {
+  // 沒有任何車：3 km 用預設車速＝10 分；不知道幾點上車，所以也沒有幾點到
+  const empty = C.createTracker([VARIANT]);
+  const e = C.rideEstimate(empty, "900|0", C.routeArrivals(empty, "900|0", null, T("09:00")), 3, 6, T("09:00"));
+  assert.deepEqual([e.bus, Math.round(e.min * 100) / 100, e.boardMs, e.arriveMs, e.coverage], [null, 10, null, null, 0]);
+  // 前車剛用每公里 6 分鐘跑過 3–6 km（比預設慢）：現在沒有車，車程照前車的速度算
+  const steps = [];
+  for (let i = 0; i <= 30; i++) steps.push([`09:${String(i).padStart(2, "0")}`, [fix("前車", 2.5 + i / 6, `09:${String(i).padStart(2, "0")}`)]]);
+  const tr = trackerWith(steps);
+  const now = T("09:40");                                      // 前車的定位已經過期（超過 3 分鐘沒更新），不算在跑
+  const R = C.routeArrivals(tr, "900|0", null, now);
+  assert.equal(R.active.length, 0);
+  const slow = C.rideEstimate(tr, "900|0", R, 3, 6, now);
+  assert.equal(slow.bus, null);
+  assert.ok(Math.abs(slow.min - 18) < 0.5, `車程 ${slow.min}`);
+  assert.ok(slow.coverage > 0.95);
+  // 逐班表路線、車還沒發：上車時刻用班表推的那一班，幾點到＝上車時刻＋車程
+  const tt = C.createTracker([TT]);
+  const Rt = C.routeArrivals(tt, "901|0", null, T("09:10"));
+  assert.equal(Rt.perStop[3][0].source, "班表");
+  const et = C.rideEstimate(tt, "901|0", Rt, 3, 6, T("09:10"));
+  assert.deepEqual([et.bus, C.fmtTime(et.boardMs), C.fmtTime(et.arriveMs), Math.round(et.min)], [null, "09:40", "09:50", 10]);
+  // 只有班距的路線：「≤ N 分」是上限不是時刻，不拿來當上車時刻
+  const fq = C.createTracker([FQ]);
+  const Rf = C.routeArrivals(fq, "902|0", null, T("09:10"));
+  assert.equal(Rf.perStop[3][0].upper, true);
+  const ef = C.rideEstimate(fq, "902|0", Rf, 3, 6, T("09:10"));
+  assert.deepEqual([ef.boardMs, ef.arriveMs, Math.round(ef.min)], [null, null, 10]);
+  // 那台車到得了上車站、但下車站超出推估範圍：改用段速，幾點到＝上車時刻＋車程
+  const keep = C.P.horizonMin;
+  C.P.horizonMin = 15;
+  try {
+    const far = trackerWith([["09:00", [fix("A", 1, "09:00")]]]);
+    const Rh = C.routeArrivals(far, "900|0", null, T("09:00"));
+    assert.equal(Rh.perStop[9].length, 0, "第 9 站（26 分 40 秒後）超出 15 分鐘的範圍");
+    const eh = C.rideEstimate(far, "900|0", Rh, 3, 9, T("09:00"));
+    assert.deepEqual([eh.bus, Math.round(eh.min), eh.boardMs, C.fmtTime(eh.arriveMs)], [null, 20, Rh.perStop[3][0].ms, "09:26"]);
+  } finally { C.P.horizonMin = keep; }
+});
+
+test("車程：下車站不在上車站之後、站序超出範圍、沒有這條路線，都回傳 null", () => {
+  const tr = trackerWith([["09:00", [fix("A", 1, "09:00")]]]);
+  const R = C.routeArrivals(tr, "900|0", null, T("09:00"));
+  assert.equal(C.rideEstimate(tr, "900|0", R, 6, 3, T("09:00")), null);
+  assert.equal(C.rideEstimate(tr, "900|0", R, 3, 3, T("09:00")), null);
+  assert.equal(C.rideEstimate(tr, "900|0", R, 3, 99, T("09:00")), null);
+  assert.equal(C.rideEstimate(tr, "999|0", R, 3, 6, T("09:00")), null);
+  // 還沒算過這個變體（result 是空的）：照樣給得出用段速估的車程
+  assert.equal(Math.round(C.rideEstimate(tr, "900|0", null, 3, 6, T("09:00")).min), 10);
+});
+
+// ---------------------------------------------------------------- 起站末班發車時刻
+test("起站末班：用營運日的星期挑；幾個變體取最晚的（過午夜的算更晚）；有一個沒資料就不給", () => {
+  const v = (ld) => ({ lastDeparture: ld });
+  const week = { sat: "22:10", sun: "21:00" };
+  assert.equal(C.lastDepartureToday([v(week)], T("09:00")), "22:10", "10/3 是週六");
+  assert.equal(C.lastDepartureToday([v(week)], T("00:30", "2026-10-04")), "22:10", "週日凌晨 00:30 還算週六的營運日");
+  assert.equal(C.lastDepartureToday([v(week)], T("03:00", "2026-10-04")), "21:00", "03:00 起算週日");
+  // 幾個變體：取最晚的；凌晨的時刻是深夜那一班，比 23 點多的晚；00:00 是午夜的末班
+  assert.equal(C.lastDepartureToday([v({ sat: "22:10" }), v({ sat: "23:00" }), v({ sat: "21:30" })], T("09:00")), "23:00");
+  assert.equal(C.lastDepartureToday([v({ sat: "23:50" }), v({ sat: "00:20" })], T("09:00")), "00:20");
+  assert.equal(C.lastDepartureToday([v({ sat: "00:20" }), v({ sat: "23:50" })], T("09:00")), "00:20", "和順序無關");
+  assert.equal(C.lastDepartureToday([v({ sat: "23:30" }), v({ sat: "00:00" })], T("09:00")), "00:00");
+  assert.equal(C.lastDepartureToday([v({ sat: "02:59" }), v({ sat: "03:00" })], T("09:00")), "02:59", "03:00 起是清晨的班次，不是深夜");
+  // 資料不完整：不給
+  assert.equal(C.lastDepartureToday([v({ sat: "22:10" }), v({ sun: "23:00" })], T("09:00")), null, "其中一個變體沒有今天的");
+  assert.equal(C.lastDepartureToday([v({ sat: "23:00" }), v({})], T("09:00")), null);
+  assert.equal(C.lastDepartureToday([v({}), v({ sat: "23:00" })], T("09:00")), null, "沒資料的排前面也一樣");
+  assert.equal(C.lastDepartureToday([{}], T("09:00")), null);
+  assert.equal(C.lastDepartureToday([v({ sat: "2210" })], T("09:00")), null, "格式不對");
+  assert.equal(C.lastDepartureToday([v({ sat: "" })], T("09:00")), null);
+  assert.equal(C.lastDepartureToday([], T("09:00")), null, "這一列還沒載入任何變體");
+  assert.equal(C.lastDepartureToday(null, T("09:00")), null);
 });

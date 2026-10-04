@@ -515,9 +515,75 @@ class PoleHeadingTest(unittest.TestCase):
                        "GetPathDetail": _path(10, [101, 102, 103]) + _path(20, [201, 202])}}
         index, _ = build_city(raw)
         got = {p[0]: p[5] for p in index["plats"]}
-        self.assertEqual(index["schema"], 2)
+        self.assertEqual(index["schema"], 3)
         self.assertEqual(got[900], 90)
         self.assertEqual(got[901], -1, "甲往東、乙往西共用的站牌：不一致，給 -1")
+
+
+# ---------------------------------------------------------------- 站牌的地址與月台（等車頁的候車位置用它當標籤）
+class PoleAddressTest(unittest.TestCase):
+    def test_bay_needs_a_number(self):
+        from build_city import pole_bay
+        self.assertEqual([pole_bay(a) for a in (
+            "縣民大道公車專用月台第三月台(向東)", "林口區文化三路一段6號第1月台(向北)", "轉運站第12月台", "淡水轉運站停車場側第二月台(向南)", "第十二月台")],
+            ["第三月台", "第1月台", "第12月台", "第二月台", "第十二月台"])
+        # 沒有編號的月台（下客月台、接駁月台、「交6月台站區」）認不出是第幾個，不算
+        self.assertEqual([pole_bay(a) for a in (
+            "大園區航站南路9號下客月台(向東南)", "北新路一段捷運站接駁月台(向西)", "臺北市中正區忠孝西路1段72號對面(交6月台站區)(向西)",
+            "民族路290號同向(向東)", "第月台", "", None)], [""] * 7)
+
+    def test_short_address(self):
+        from build_city import short_address
+        cases = {
+            "民族路290號同向(向東)": "民族路290號",                                  # 括號與「同向」拿掉
+            "中華路一段166號路側(向南)": "中華路一段166號",
+            "中山北路一段30號對向(向北)": "中山北路一段30號對向",                     # 「對向」「對面」是地址的一部分，留著
+            "板橋火車站西側門對面(向東)": "板橋火車站西側門對面",
+            "新北市汐止區汐萬路三段252巷27號(向南)": "汐萬路三段252巷27號",          # 縣市與行政區拿掉
+            "北市中正區鎮江街2號(向南)": "鎮江街2號",
+            "臺北市中正區忠孝西路1段72號對面(交6月台站區)(向西)": "忠孝西路1段72號對面",
+            "林口區文化三路一段6號第1月台(向北)": "文化三路一段6號第1月台",
+            "新店市中正路100號": "中正路100號",                                       # 舊制的市
+            "中華路一段台北憲兵隊前(捷運西門站2號出口)(向北)": "中華路一段台北憲兵隊前",   # 兩組括號都拿掉
+            "民生路（向西）": "民生路",                                               # 全形括號
+            "茂林社區活動中心前(向北)": "茂林社區活動中心前",                         # 「社區」不是行政區：不能削
+            "皇家特區大門(向南)": "皇家特區大門",
+            "中正路12號(向東)": "中正路12號",                                         # 路名開頭和行政區同名
+            "林口區": "林口區",                                                       # 整個地址只有行政區：留著，不要變成空的
+            "同向": "", "": "",
+        }
+        self.assertEqual({a: short_address(a) for a in cases}, cases)
+        self.assertEqual(short_address(None), "")
+
+    def test_index_carries_address_and_bay(self):
+        from build_city import build_city
+        base = {"GetRoute": [_route(1, 10, name="甲")],
+                "GetStop": [_stop(101, 1, 0, 0, 0, loc=900), _stop(102, 1, 1, 0, 1, loc=901), _stop(103, 1, 2, 0, 2, loc=902), _stop(104, 1, 3, 0, 3, loc=903)],
+                "GetPathDetail": _path(10, [101, 102, 103, 104])}
+        loc = [{"id": 900, "address": "新北市板橋區縣民大道公車專用月台第三月台(向東)"}, {"id": 901, "address": "民族路290號同向(向東)"},
+               {"id": 902, "address": ""}, {"id": 999, "address": "沒有這根站牌"}]
+        index, _ = build_city({"tpe": {**base, "GetStopLocation": loc}})
+        rows = {p[0]: p[5:] for p in index["plats"]}
+        self.assertEqual(rows[900], [90, "縣民大道公車專用月台第三月台", "第三月台"], "有月台才多一欄")
+        self.assertEqual(rows[901], [90, "民族路290號"])
+        self.assertEqual(rows[902], [90, ""], "地址空白：空字串，不是 None、也不能少一欄")
+        self.assertNotIn(903, rows, "終點站不列")
+        # 沒有站牌地址檔：照樣建得出來，地址留空
+        plain, _ = build_city({"tpe": base})
+        self.assertEqual({p[0]: p[5:] for p in plain["plats"]}, {900: [90, ""], 901: [90, ""], 902: [90, ""]})
+        # 兩市共用的站牌：地址以先讀到的來源為準，另一邊空白時不會把它蓋成空的
+        other = {"GetRoute": [_route(2, 20, name="乙")], "GetStop": [_stop(201, 2, 0, 0, 0, loc=900), _stop(202, 2, 1, 0, 1, loc=905), _stop(203, 2, 2, 0, 2, loc=906)],
+                 "GetPathDetail": _path(20, [201, 202, 203]), "GetStopLocation": [{"id": 900, "address": ""}, {"id": 905, "address": "新北市三重區重新路一段1號"}]}
+        both, _ = build_city({"tpe": {**base, "GetStopLocation": loc}, "ntpc": other})
+        got = {p[0]: p[6:] for p in both["plats"]}
+        self.assertEqual((got[900], got[905]), (["縣民大道公車專用月台第三月台", "第三月台"], ["重新路一段1號"]))
+        # 兩邊都有、寫法不同：以先讀到的為準
+        other2 = {**other, "GetStopLocation": [{"id": 900, "address": "新北市板橋區另一種寫法"}]}
+        first, _ = build_city({"tpe": {**base, "GetStopLocation": loc}, "ntpc": other2})
+        self.assertEqual({p[0]: p[6:] for p in first["plats"]}[900], ["縣民大道公車專用月台第三月台", "第三月台"])
+        # 先讀到的那一邊是空白：用另一邊的
+        swapped, _ = build_city({"ntpc": other, "tpe": {**base, "GetStopLocation": loc}})
+        self.assertEqual({p[0]: p[6:] for p in swapped["plats"]}[900], ["縣民大道公車專用月台第三月台", "第三月台"])
 
 
 if __name__ == "__main__":

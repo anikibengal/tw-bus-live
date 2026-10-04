@@ -35,16 +35,9 @@
         <button type="button" class="btn solid" id="saveTemp">存成常用</button>
         <button type="button" class="btn" id="dropTemp">移除</button>
       </div>
+      <div class="posrow" id="posRow" hidden></div>
       <div id="leave"></div>
       <div id="board"></div>
-      <section class="all" id="allWrap" hidden>
-        <button type="button" class="sec-h" id="allBtn" aria-expanded="false" aria-controls="allBody"></button>
-        <div id="allBody" hidden>
-          <div class="flt" id="fltRow"><label for="flt">只看</label><input type="text" id="flt" autocomplete="off" placeholder="輸入路線號碼"></div>
-          <div id="allList"></div>
-          <div id="allFoot"></div>
-        </div>
-      </section>
       <p class="hint" id="geoNote"></p>
       <p class="hint credit">資料：臺北市、新北市公車動態・交通部 TDX</p>
     </div>
@@ -74,11 +67,14 @@
 
   <section class="view" id="view-route" role="tabpanel" hidden>
     <div class="wrap">
-      <div class="bar">
-        <select id="groupSel" aria-label="路線與方向"></select>
-        <input type="search" id="find" list="stopNames" placeholder="找站名…" aria-label="找站名">
-        <datalist id="stopNames"></datalist>
-        <button type="button" class="btn" id="mareyBtn" title="時間與沿線位置的圖：看車有沒有擠在一起">時距圖</button>
+      <div class="routebar">
+        <div class="bar">
+          <select id="routeSel" aria-label="路線"></select>
+          <input type="search" id="find" list="stopNames" placeholder="找站名…" aria-label="找站名">
+          <datalist id="stopNames"></datalist>
+          <button type="button" class="btn" id="mareyBtn" title="時間與沿線位置的圖：看車有沒有擠在一起">時距圖</button>
+        </div>
+        <div class="seg dirs" id="dirSeg" role="group" aria-label="方向" hidden></div>
       </div>
       <ol class="strip" id="strip"></ol>
     </div>
@@ -88,9 +84,10 @@
     <div class="wrap">
       <div class="bar">
         <button type="button" class="btn icon" id="mareyBack" aria-label="回到路線" title="回到路線"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
-        <select id="groupSel2" aria-label="路線與方向"></select>
+        <select id="routeSel2" aria-label="路線"></select>
         <span class="hint">實線＝實際，虛線＝推估</span>
       </div>
+      <div class="seg dirs" id="dirSeg2" role="group" aria-label="方向" hidden></div>
       <div id="marey"></div>
     </div>
   </section>
@@ -102,6 +99,19 @@
   <button type="button" role="tab" data-tab="find"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>找公車</button>
   <button type="button" role="tab" data-tab="route"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v16M6 6h1m-1 6h1m-1 6h1m4-12h9m-9 6h9m-9 6h9"/></svg>路線</button>
 </nav>
+
+<div class="picker" id="picker" hidden>
+  <button type="button" class="picker-bg" data-pick-close aria-label="關閉"></button>
+  <div class="picker-box" role="dialog" aria-modal="true" aria-label="選路線">
+    <div class="picker-h">
+      <div><b id="pickTitle"></b><small id="pickSub"></small></div>
+      <button type="button" class="btn solid" data-pick-close>完成</button>
+    </div>
+    <div class="flt" id="fltRow"><input type="text" id="flt" autocomplete="off" placeholder="路線號碼" aria-label="路線號碼"></div>
+    <div class="picker-list" id="pickList"></div>
+    <div id="pickFoot"></div>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="data/app-data.js"></script>
