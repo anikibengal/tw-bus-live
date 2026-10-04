@@ -156,6 +156,17 @@ class MergeSameServiceTest(unittest.TestCase):
         self.assertEqual((w["start"], w["end"], w["minHeadway"], w["maxHeadway"]), ("04:40", "22:30", 12, 20))
         self.assertEqual(out[1]["label"], "A")                     # 沒被合併的維持原樣
         self.assertEqual(vs[0]["lastDeparture"], {"sat": "22:20"}, "不能改到輸入")
+        self.assertNotIn("nominal", m["schedule"], "兩邊都是可信的班距表：合併後不會憑空多出 nominal")
+        # 班距只是登記數字（nominal）的標記，合併後要留著：任何一邊有就算
+        nom = lambda a, b, lo, hi: dict(freq(a, b, lo, hi), nominal=True)  # noqa: E731
+        for first, second in ((nom, nom), (nom, freq), (freq, nom)):
+            pair = [_variant("A", 0, [1, 2, 3], first("04:40", "22:20", 15, 20)), _variant("B", 0, [1, 2, 3], second("05:10", "22:30", 12, 18))]
+            sch = merge_same_service(pair)[0]["schedule"]
+            self.assertIs(sch.get("nominal"), True)
+            self.assertEqual((sch["type"], len(sch["windows"]), sch["windows"][0]["end"]), ("frequency", 1, "22:30"))
+        # 第一個沒有班距表、後面的有：整個沿用後面的（含標記）
+        late = merge_same_service([_variant("A", 0, [1, 2, 3]), _variant("B", 0, [1, 2, 3], nom("05:10", "22:30", 12, 18))])[0]["schedule"]
+        self.assertIs(late.get("nominal"), True)
 
     def test_different_stops_or_direction_or_route_do_not_merge(self):
         from build_app import merge_same_service
@@ -225,6 +236,29 @@ class OfficialNameTest(unittest.TestCase):
         self.assertEqual((n[0]["display"], n[0]["toward"]), ("903", "迄"))
 
 
+class PublishedScheduleTest(unittest.TestCase):
+    """已經建好、會公開的資料檔：哪些班距表可以拿來補班次要標對（改了建置規則卻忘了重建，這裡會紅）。"""
+
+    def test_city_route_files_are_nominal_and_builtin_routes_are_not(self):
+        import json
+        web = Path(__file__).resolve().parent.parent / "web" / "data"
+        if not (web / "routes").exists():
+            self.skipTest("還沒建置 web/data/routes")
+        kinds = {"frequency": 0, "nominal": 0}
+        for f in (web / "routes").glob("*.json"):
+            for v in json.loads(f.read_text(encoding="utf-8"))["variants"]:
+                if v["schedule"]["type"] == "frequency":
+                    kinds["frequency"] += 1
+                    kinds["nominal"] += v["schedule"].get("nominal") is True
+        self.assertGreater(kinds["frequency"], 100)
+        self.assertEqual(kinds["nominal"], kinds["frequency"], "全市路線檔裡有班距表的變體都要標 nominal")
+        src = (web / "app-data.js").read_text(encoding="utf-8")
+        app = json.loads(src[src.index("=") + 1:].strip().rstrip(";"))
+        freq = [v for v in app["variants"] if v["schedule"]["type"] == "frequency"]
+        self.assertTrue(freq, "內建路線至少有一個班距表")
+        self.assertFalse([v["key"] for v in freq if v["schedule"].get("nominal")], "內建路線（TDX 的分時段班距表）不標 nominal")
+
+
 # ---------------------------------------------------------------- 全市索引（台北市＋新北市的開放資料靜態檔）
 def _route(rid, pid, name="測", sub=None, **kw):
     base = {"Id": rid, "pathAttributeId": pid, "nameZh": name, "pathAttributeName": sub or name,
@@ -262,6 +296,8 @@ class CityBuildTest(unittest.TestCase):
             {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "05:00", "end": "22:10", "minHeadway": 4, "maxHeadway": 10},
             {"days": ["sat", "sun"], "start": "06:00", "end": "22:00", "minHeadway": 7, "maxHeadway": 10}])
         self.assertEqual((last["mon"], last["sun"]), ("22:10", "22:00"))
+        self.assertEqual({k: v for k, v in go.items() if k != "windows"}, {"type": "frequency", "nominal": True},
+                         "全市路線的班距只是登記的尖峰／離峰數字：標 nominal，網頁不拿它補班次")
         back, last_b = frequency_schedule(_route(1, 10), 1)
         self.assertEqual([(w["start"], w["end"]) for w in back["windows"]], [("05:30", "22:40"), ("05:30", "22:40")],
                          "返程用返程的首末班；假日欄位空白時沿用平日")

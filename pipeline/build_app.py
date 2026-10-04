@@ -80,7 +80,9 @@ def merge_same_service(variants: list[dict]) -> list[dict]:
                 x["start"], x["end"] = min(x["start"], w["start"]), max(x["end"], w["end"])
                 x["minHeadway"] = min(x["minHeadway"], w["minHeadway"])
                 x["maxHeadway"] = max(x["maxHeadway"], w["maxHeadway"])
-            m["schedule"] = {"type": "frequency", "windows": list(wins.values())}
+            # 任何一邊的班距只是登記數字（nominal）：合併後也是，不能因為重組就變成可以拿來補班次
+            flag = {"nominal": True} if a.get("nominal") or b.get("nominal") else {}
+            m["schedule"] = {"type": "frequency", **flag, "windows": list(wins.values())}
     for m in out:
         if len(m["merged"]) > 1:
             m["label"] = m["display"]

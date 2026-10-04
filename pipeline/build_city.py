@@ -204,7 +204,9 @@ def frequency_schedule(route: dict, go_back: int) -> tuple[dict, dict]:
         if close and hs and start < close:
             windows.append({"days": days, "start": start, "end": close,
                             "minHeadway": min(h[0] for h in hs), "maxHeadway": max(h[1] for h in hs)})
-    return ({"type": "frequency", "windows": windows} if windows else {"type": "none"}), last
+    # nominal＝班距只是路線登記的尖峰／離峰數字：網頁不拿它補「依班距」的班次（用實際到站驗證過，約四分之一的車不存在、三成比上限晚到；
+    # 內建路線用的 TDX 班距表分時段，沒有這個問題）。時段與班距照樣留在資料裡。
+    return ({"type": "frequency", "nominal": True, "windows": windows} if windows else {"type": "none"}), last
 
 
 def build_route(src: str, subs: list[dict], stop_by_id: dict, paths: dict, shapes: dict | None = None) -> list[dict]:

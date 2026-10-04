@@ -32,6 +32,12 @@ const etaOf = (hhmm, pairs, routeId = "90") => ({ updateMs: T(hhmm),
   map: new Map(pairs.map(([stop, sec, gb = "0"]) => [`${routeId}|${gb}|${1000 + stop}`, sec])),
   byStop: new Map(pairs.map(([stop, sec, gb = "0"]) => [`${routeId}|${1000 + stop}`, [sec, String(gb)]])) });
 const at = (list) => list.map((x) => [x.bus, C.fmtTime(x.ms), x.source]);
+/** 只追蹤這個變體、而且它現在有一台車在跑（在第 km 公里；預設第 8 公里，前面的站都過了）。依班距那一筆只在變體有車在跑時才補。 */
+function runningAt(v, hhmm, day = "2026-10-03", km = 8, extra = {}) {
+  const tr = C.createTracker([v]);
+  C.ingestBusData(tr, { BusInfo: [{ ...fix("跑", km, hhmm, { route: v.subRouteId, ...extra }), DataTime: `${day} ${hhmm}:00` }] }, T(hhmm, day));
+  return tr;
+}
 
 test("營運日：凌晨 00:30 算前一天（週六）", () => {
   const sd = C.serviceDay(T("00:30", "2026-10-04"));
@@ -366,7 +372,7 @@ test("班距表路線：營運日 03:00 換日，凌晨的時段不會算到當�
 
 test("跨午夜的時段：凌晨起點還沒發車的站照樣補一筆依班距的上限", () => {
   const v = NIGHT([win("05:40", "24:30", ["sat"], SAT)]);
-  const at2 = (hhmm, day) => at(C.routeArrivals(C.createTracker([v]), "903", null, T(hhmm, day)).perStop[3]);
+  const at2 = (hhmm, day) => at(C.routeArrivals(runningAt(v, hhmm, day), "903", null, T(hhmm, day)).perStop[3]);
   assert.deepEqual(at2("23:30"), [[null, "00:00", "班距"]]);              // 23:30 + 班距上限 20 + 3 km ÷ 18 km/h
   assert.deepEqual(at2("00:10", "2026-10-04"), [[null, "00:40", "班距"]]);
   assert.deepEqual(at2("00:30", "2026-10-04"), [], "末班已發：不再補");
@@ -375,10 +381,103 @@ test("跨午夜的時段：凌晨起點還沒發車的站照樣補一筆依班�
 });
 
 test("只有班距的路線：沒車的站補一筆依班距的上限", () => {
-  const tr = trackerWith([], [FQ]);
-  const r = C.routeArrivals(tr, "902", null, T("09:30"));
+  const r = C.routeArrivals(runningAt(FQ, "09:30"), "902", null, T("09:30"));
   assert.deepEqual(at(r.perStop[3]), [[null, "09:50", "班距"]]);       // 09:30 + 班距上限 10 + 3 km ÷ 18 km/h
   assert.equal(r.perStop[3][0].upper, true);
+});
+
+test("依班距那一筆只在這個變體現在有車在跑時才補", () => {
+  const stop3 = (tr, hhmm = "09:30") => at(C.routeArrivals(tr, "902", null, T(hhmm)).perStop[3]);
+  // 班距欄位只是登記的數字：整個變體沒有任何一台車在路上（調度站發車、只跑尖峰的區間車、已經收班），補出來的多半是不存在的車
+  assert.deepEqual(stop3(C.createTracker([FQ])), [], "沒有車在跑：不補");
+  assert.deepEqual(stop3(runningAt(FQ, "09:30")), [[null, "09:50", "班距"]], "有一台在跑（已經過了這一站）：補");
+  // 要是「營運中」的車才算：非營運狀態、定位過期（超過 3 分鐘）、已經到終點的都不算
+  assert.deepEqual(stop3(runningAt(FQ, "09:30", undefined, 8, { duty: "0" })), [], "非營運中的車不算");
+  assert.deepEqual(stop3(runningAt(FQ, "09:26"), "09:30"), [], "定位是 4 分鐘前的：不算在跑");
+  assert.deepEqual(stop3(runningAt(FQ, "09:30", undefined, 9.95)), [], "已經到終點的車不算");
+  // 看的是這個變體自己：同一個追蹤器裡別的變體有車，不算數
+  const other = { ...FQ, subRouteId: "905", routeId: "95" };
+  const tr = C.createTracker([FQ, other]);
+  C.ingestBusData(tr, { BusInfo: [fix("別線", 8, "09:30", { route: "905" })] }, T("09:30"));
+  assert.deepEqual(stop3(tr), []);
+  assert.deepEqual(at(C.routeArrivals(tr, "905", null, T("09:30")).perStop[3]), [[null, "09:50", "班距"]]);
+});
+
+test("班距只是登記數字的路線（nominal）不補依班距那一筆；班距與末班時刻照樣查得到", () => {
+  // 全市路線檔的班距表：只有路線登記的尖峰／離峰班距，驗證過不可靠，所以不拿來補班次
+  const nominal = { ...FQ, schedule: { ...FQ.schedule, nominal: true } };
+  const r = C.routeArrivals(runningAt(nominal, "09:30"), "902", null, T("09:30"));
+  assert.deepEqual(r.perStop.map((l) => l.filter((a) => a.source === "班距").length), Array(11).fill(0), "每一站都不補");
+  assert.deepEqual(at(r.perStop[9]), [["跑", "09:33", "預設"]], "有車牌的推估照常");
+  assert.deepEqual(r.headway, { min: 7, max: 10 });
+  assert.deepEqual(C.headwayNow(nominal, T("09:30")), { min: 7, max: 10 });
+  assert.equal(C.fmtTime(C.serviceEndMs(nominal, T("09:30"))), "22:10");
+  // 對照：同一個情況、沒有標 nominal（內建路線的班距表）→ 照補
+  const trusted = C.routeArrivals(runningAt(FQ, "09:30"), "902", null, T("09:30"));
+  assert.deepEqual(at(trusted.perStop[3]), [[null, "09:50", "班距"]]);
+  assert.deepEqual(C.routeArrivals(runningAt({ ...FQ, schedule: { ...FQ.schedule, nominal: false } }, "09:30"), "902", null, T("09:30")).perStop[3].map((a) => a.source), ["班距"]);
+});
+
+test("這一段營運時段的末班發車時刻：時段相連就接到最後一個的結束，有空檔就停在空檔之前", () => {
+  assert.equal(C.fmtTime(C.serviceEndMs(FQ, T("09:30"))), "22:10");
+  assert.equal(C.serviceEndMs(FQ, T("22:10")), null, "末班時刻已到（不含迄）");
+  assert.equal(C.serviceEndMs(FQ, T("04:59")), null, "首班之前");
+  assert.equal(C.serviceEndMs(VARIANT, T("09:30")), null, "沒有班距表");
+  assert.equal(C.serviceEndMs(TT, T("09:30")), null, "逐班表路線");
+  assert.equal(C.serviceEndMs({ ...FQ, schedule: { ...FQ.schedule, type: "none" } }, T("09:30")), null, "只認班距表（和 headwayNow 同一個判斷）");
+  // 307 的寫法：05:00–21:00、21:00–22:10 兩個時段相連 → 21:00 不是收班
+  const two = NIGHT([win("05:00", "21:00", ["sat"], SAT), win("21:00", "22:10", ["sat"], SUN)]);
+  assert.equal(C.fmtTime(C.serviceEndMs(two, T("20:55"))), "22:10");
+  assert.equal(C.fmtTime(C.serviceEndMs(two, T("21:30"))), "22:10");
+  // 順序顛倒、三段相連也一樣
+  const three = NIGHT([win("21:00", "22:10", ["sat"], SUN), win("09:00", "21:00", ["sat"], SAT), win("05:00", "09:00", ["sat"], SAT)]);
+  assert.equal(C.fmtTime(C.serviceEndMs(three, T("05:30"))), "22:10");
+  // 中間有空檔（上午一段、下午一段）：上午那一段的末班是 10:00
+  const gap = NIGHT([win("05:00", "10:00", ["sat"], SAT), win("16:00", "22:00", ["sat"], SAT)]);
+  assert.equal(C.fmtTime(C.serviceEndMs(gap, T("09:55"))), "10:00");
+  assert.equal(C.serviceEndMs(gap, T("12:00")), null);
+  assert.equal(C.fmtTime(C.serviceEndMs(gap, T("16:00"))), "22:00");
+  // 別的星期的時段不能接上來
+  const days = NIGHT([win("05:00", "21:00", ["sat"], SAT), win("21:00", "23:00", ["sun"], SUN)]);
+  assert.equal(C.fmtTime(C.serviceEndMs(days, T("20:55"))), "21:00");
+  // 跨午夜的時段（24:30）：末班是隔天 00:30，凌晨問也一樣
+  const night = NIGHT([win("05:40", "24:30", ["sat"], SAT)]);
+  assert.equal(C.serviceEndMs(night, T("23:30")), T("00:30", "2026-10-04"));
+  assert.equal(C.serviceEndMs(night, T("00:10", "2026-10-04")), T("00:30", "2026-10-04"));
+});
+
+test("收班前：站上那一班對不到車（官方說未發車、未定位）時，離末班不到一個班距上限就不再補下一班", () => {
+  // FQ：班距 7～10 分，末班 22:10。一台車在第 8 公里跑（讓變體算有在跑），第 3 站只有官方的預估
+  const stop3 = (hhmm, pairs) => C.routeArrivals(runningAt(FQ, hhmm), "902", etaOf(hhmm, pairs, "92"), T(hhmm)).perStop[3].map((x) => x.source);
+  const notYet = [[3, 300, "1"]], noFix = [[3, 300]];              // 官方說那班車還在對向（未發車）／就在這個方向上但我們沒定位到
+  assert.deepEqual(stop3("21:30", notYet), ["官方・未發車", "班距"], "離末班還有 40 分：照補");
+  assert.deepEqual(stop3("21:59", notYet), ["官方・未發車", "班距"], "還有 11 分，超過班距上限 10 分：至少還有兩班");
+  assert.deepEqual(stop3("22:00", notYet), ["官方・未發車"], "剛好一個班距上限：那一班可能就是末班，不補");
+  assert.deepEqual(stop3("22:09", notYet), ["官方・未發車"]);
+  assert.deepEqual(stop3("21:59", noFix), ["官方・未定位", "班距"]);
+  assert.deepEqual(stop3("22:00", noFix), ["官方・未定位"]);
+  // 站上沒有任何一班：補的那一筆就是還沒發的末班，照補
+  assert.deepEqual(stop3("22:09", []), ["班距"]);
+  // 時段相連的路線（05:00–21:00、21:00–22:10）：20:55 不是收班前
+  const two = { ...FQ, schedule: { type: "frequency", windows: [{ ...FQ.schedule.windows[0], end: "21:00" }, { ...FQ.schedule.windows[0], start: "21:00" }] } };
+  const r = C.routeArrivals(runningAt(two, "20:55"), "902", etaOf("20:55", notYet, "92"), T("20:55"));
+  assert.deepEqual(r.perStop[3].map((x) => x.source), ["官方・未發車", "班距"]);
+});
+
+test("收班前：站上那一班是還停在起點的車時，離末班不到一個最短班距就不再補；已經在路上的車後面照補", () => {
+  // 起點附近＝0.5 km 以內。FQ 最短班距 7 分、末班 22:10
+  const stop3 = (hhmm, km) => C.routeArrivals(runningAt(FQ, hhmm, undefined, km), "902", null, T(hhmm)).perStop[3].map((x) => x.source);
+  assert.deepEqual(stop3("21:30", 0.2), ["預設", "班距"], "平常：起點那台後面還有下一班");
+  assert.deepEqual(stop3("22:03", 0.2), ["預設", "班距"], "離末班剛好 7 分：還排得下一班");
+  assert.deepEqual(stop3("22:04", 0.2), ["預設"], "只剩 6 分：起點那台就是末班");
+  assert.deepEqual(stop3("22:09", 0.2), ["預設"]);
+  assert.deepEqual(stop3("22:09", 0.45), ["預設"]);
+  // 已經開出去的車（0.5 km 以外）：它後面那一筆就是還沒發的末班
+  assert.deepEqual(stop3("22:09", 0.55), ["預設", "班距"]);
+  assert.deepEqual(stop3("22:09", 2), ["預設", "班距"]);
+  // 上限的算法沒變：現在 + 班距上限 + 開到這一站的時間，不早於前一班 + 最短班距
+  const r = C.routeArrivals(runningAt(FQ, "22:09", undefined, 2), "902", null, T("22:09")).perStop[3];
+  assert.deepEqual(at(r), [["跑", "22:12", "預設"], [null, "22:29", "班距"]]);
 });
 
 test("依班距那一筆排在已知車輛之後", () => {
@@ -475,7 +574,7 @@ test("預設車速依時段：白天與夜間各用各的，分界含起不含�
     }
     // 班距補的那一筆也跟著時段走：班距上限 10 分 + 3 km 的行車時間
     for (const [hhmm, want] of [["09:30", "09:55"], ["21:30", "21:49"]]) {
-      const r = C.routeArrivals(C.createTracker([FQ]), "902", null, T(hhmm));
+      const r = C.routeArrivals(runningAt(FQ, hhmm), "902", null, T(hhmm));
       assert.deepEqual(at(r.perStop[3]), [[null, want, "班距"]], hhmm);
     }
   } finally { Object.assign(C.P, keep); }
@@ -951,7 +1050,7 @@ test("車程：沒有車可以對（未發車、沒定位、超出推估範圍�
   const et = C.rideEstimate(tt, "901|0", Rt, 3, 6, T("09:10"));
   assert.deepEqual([et.bus, C.fmtTime(et.boardMs), C.fmtTime(et.arriveMs), Math.round(et.min)], [null, "09:40", "09:50", 10]);
   // 只有班距的路線：「≤ N 分」是上限不是時刻，不拿來當上車時刻
-  const fq = C.createTracker([FQ]);
+  const fq = runningAt(FQ, "09:10");
   const Rf = C.routeArrivals(fq, "902|0", null, T("09:10"));
   assert.equal(Rf.perStop[3][0].upper, true);
   const ef = C.rideEstimate(fq, "902|0", Rf, 3, 6, T("09:10"));
