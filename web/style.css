@@ -1,0 +1,342 @@
+:root {
+  --bg: #0b1120;
+  --surface: #121a2c;
+  --surface-2: #18223a;
+  --line: #24304a;
+  --ink: #e6ebf5;
+  --ink-2: #a3aec4;
+  --ink-3: #6f7a91;
+  --accent: #f5a524;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --chip-ink: #0b1120;
+  --radius: 12px;
+  --font: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+  color-scheme: dark;
+}
+/* 白天在戶外看：跟著系統的淺色模式，對比比較夠 */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f5f9; --surface: #ffffff; --surface-2: #eef1f6; --line: #d9dfe9;
+    --ink: #111827; --ink-2: #475569; --ink-3: #64748b;
+    --accent: #b45309; --good: #15803d; --warn: #b45309; --bad: #b91c1c;
+    color-scheme: light;
+  }
+  .night-tiles { filter: none !important; }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+[hidden] { display: none !important; }
+button, select, input { font: inherit; color: inherit; }
+
+/* ---------- 頁首（一行） ---------- */
+.top { display: flex; align-items: center; gap: 8px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--surface); border-bottom: 1px solid var(--line); }
+h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+.status { margin: 0; flex: 1; min-width: 0; color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status .err, .status .warn { color: var(--bad); }
+.status .warn { color: var(--warn); }
+.btn { background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; white-space: nowrap; min-height: 34px; }
+.btn[aria-pressed="false"] { color: var(--warn); }
+.btn.solid { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; }
+.link { background: none; border: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; padding: 6px 4px; font-size: 12.5px; }
+.btn.icon { width: 38px; min-width: 38px; height: 38px; min-height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 19px; line-height: 1; }
+.btn.icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.top .btn.icon { flex: none; }
+
+/* ---------- 主要區域與分頁列（手機在下、桌機在上） ---------- */
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.view { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+#view-wait { overflow-anchor: none; }
+#view-wait .wrap { padding-bottom: 170px; }           /* 底下留空：按「關注」後上面多一列，頁面要還能往下捲那麼多，被按的那一列才留得住 */                  /* 按「關注」後自己把那一列捲回手指下；瀏覽器內建的對位在最頂端不作用、其他時候又會重複算 */
+.wrap { max-width: 860px; margin: 0 auto; padding: 12px 12px 28px; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+.tabs button { background: none; border: 0; color: var(--ink-3); padding: 7px 2px 8px; font-size: 11.5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; white-space: nowrap; }
+.tabs button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tabs button[aria-selected="true"] { color: var(--accent); font-weight: 700; }
+@media (min-width: 701px) {
+  .tabs { order: -1; display: flex; gap: 4px; padding: 0 12px; border-top: 0; border-bottom: 1px solid var(--line); }
+  .top { order: -2; }
+  .tabs button { flex-direction: row; gap: 6px; font-size: 13.5px; padding: 9px 14px; min-height: 0; border-bottom: 2px solid transparent; }
+  .tabs button svg { width: 18px; height: 18px; }
+  .tabs button[aria-selected="true"] { border-bottom-color: var(--accent); }
+}
+
+/* ---------- 共用小元件 ---------- */
+.bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.bar.row { flex-wrap: nowrap; }                       /* 地點與「別的站」排在同一行，地點多了就橫向捲動 */
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button { flex: none; background: transparent; border: 0; color: var(--ink-2); padding: 6px 13px; border-radius: 999px; cursor: pointer; white-space: nowrap; min-height: 32px; }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+/* 右邊還有東西時淡出，提示可以往右滑 */
+.seg.more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
+.hint { color: var(--ink-3); font-size: 12px; margin: 0; }
+.vchip { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; color: var(--chip-ink); background: var(--c); white-space: nowrap; }
+.src { font-size: 10.5px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.src.official { color: var(--good); }
+.src.sched { background: none; border: 1px solid var(--line); }
+.early { font-size: 11.5px; font-weight: 600; color: var(--warn); margin-left: 6px; white-space: nowrap; }
+select, input[type="search"] { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; min-height: 36px; }
+input[type="search"] { flex: 1; min-width: 140px; }
+.empty { margin: 0; padding: 8px 12px; color: var(--ink-3); font-size: 12.5px; }
+/* 路線牌：號碼大字、後綴小字 */
+.badge { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 42px; padding: 0 4px; border-radius: 10px; line-height: 1.1; background: var(--c); color: var(--chip-ink); min-width: 0; }
+.badge b { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.badge small { font-size: 11px; font-weight: 700; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }   /* 後綴很長的路線（965 台灣好行…）：截掉，不要溢出牌子 */
+.badge.plain { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+.badge.long b { font-size: 12px; line-height: 1.15; white-space: normal; text-align: center; max-height: 2.3em; overflow: hidden; }   /* 沒有號碼的長路線名：小字、最多兩行 */
+.badge.sm.long b { font-size: 10.5px; }
+.badge.sm { height: 36px; border-radius: 8px; }
+.badge.sm b { font-size: 14px; }
+.badge.sm small { font-size: 10px; }
+/* 每台車一列（展開某條路線、地圖底下的清單、站牌的小視窗） */
+.arows { list-style: none; margin: 0; padding: 0; }
+.arow { display: grid; grid-template-columns: minmax(96px, auto) minmax(0, 1fr); gap: 0 10px; padding: 8px 12px; border-top: 1px solid var(--line); align-items: baseline; }
+.arow .eta { grid-row: 1 / span 2; font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.arow .eta.soon { color: var(--good); }
+.arow .eta .early { display: block; margin: 2px 0 0; }
+.arow .whom { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.arow .plate { font-variant-numeric: tabular-nums; }
+.arow .sub { color: var(--ink-3); font-size: 11.5px; display: flex; gap: 8px; flex-wrap: wrap; }
+.arow .age { color: var(--warn); }
+.arow.stale { opacity: .55; }
+/* 可以點（到地圖看這台車）：右邊給一個箭頭 */
+.arow[data-bus] { cursor: pointer; position: relative; padding-right: 28px; }
+.arow[data-bus]:hover { background: var(--surface-2); }
+.arow[data-bus]::after { content: "›"; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-3); font-size: 18px; }
+.pop .arow[data-bus] { padding-right: 12px; }
+.pop .arow[data-bus]::after { content: none; }
+
+/* 資料超過 90 秒沒更新（斷線、暫停）：數字變淡 */
+.old-data #leave, .old-data #board, .old-data #allList, .old-data #sheetBody .arows { opacity: .5; }
+
+/* ---------- 等車：地點、出門提醒、每條關注的路線一列 ---------- */
+.seg.places { flex: 1 1 auto; min-width: 0; }
+.seg.places button { min-height: 40px; padding: 6px 14px; font-size: 14px; }
+.seg.places button[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.seg.places button.temp { box-shadow: inset 0 0 0 1px var(--ink-3); }           /* 臨時的站：細框 */
+.seg.places button.temp[aria-pressed="true"] { box-shadow: none; }
+.btn.find { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 46px; padding: 0 14px 0 10px; font-size: 14px; font-weight: 700; background: var(--surface); }
+.btn.find svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.tempbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; padding: 4px 4px 4px 12px; margin-bottom: 10px; border: 1px dashed var(--ink-3); border-radius: 12px; font-size: 13px; background: var(--surface); }
+.tempbar .btn { min-height: 44px; border-radius: 10px; font-size: 13px; }
+/* 出門提醒：這一塊高度固定、永遠在，下面的列才不會上下跳 */
+.leave { display: flex; flex-direction: column; justify-content: center; width: 100%; min-height: 60px; margin: 0 0 10px; padding: 8px 14px; border: 0; border-radius: 12px; background: var(--surface-2); font-size: 16px; font-weight: 700; text-align: left; }
+.leave.go { box-shadow: inset 0 0 0 2px var(--good); color: var(--good); }
+.leave.none { color: var(--ink-2); }
+.leave small { display: block; font-weight: 400; font-size: 12px; color: var(--ink-2); }
+.leave small .link { padding: 0; font-size: 12.5px; }
+.leave.ask { flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; cursor: pointer; font-size: 14.5px; box-shadow: inset 0 0 0 1px var(--ink-3); }
+.leave.ask svg { flex: none; width: 20px; height: 20px; fill: currentColor; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.road.slow { color: var(--warn); }
+.road.jam { color: var(--bad); }
+.sec { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.sec-cap { margin: 0 2px -2px; font-size: 12px; color: var(--ink-2); }
+.rt { background: var(--surface); border: 2px solid var(--line); border-radius: 14px; overflow: hidden; }
+.rt.hot { border-color: var(--ink); }                       /* 最快到的那一列：外框加深（列的順序不隨到站時間變，不然手指要按的那一列會跑掉） */
+.rt-main { width: 100%; border: 0; background: transparent; cursor: pointer; text-align: left; padding: 10px 12px; min-height: 84px; display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.rt-id { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rt-to { font-size: 12.5px; font-weight: 700; line-height: 1.25; }
+.rt-eta { display: flex; flex-direction: column; min-width: 0; }
+.big { display: flex; align-items: baseline; gap: 4px; font-size: 42px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.big small { font-size: 15px; font-weight: 700; }
+.big.soon { color: var(--good); }
+.rt-sub { margin-top: 2px; font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-later { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; color: var(--ink-2); }
+.rt-later b { font-size: 19px; font-weight: 700; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rt-more { border-top: 1px solid var(--line); }
+.rt-more .arow:first-child { border-top: 0; }
+.rt-acts { display: flex; justify-content: flex-end; padding: 6px 12px 10px; border-top: 1px solid var(--line); }
+.rt-acts .btn { min-height: 44px; border-radius: 10px; font-size: 13px; font-weight: 700; background: var(--surface); }
+/* 收起來的一段（對面站牌）與「這一站的全部路線」的標題列 */
+.sec-h { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; min-height: 56px; padding: 6px 12px; cursor: pointer; }
+.sec-h > span:first-child { min-width: 0; }
+.sec-h b { display: block; font-size: 14px; }
+.sec-h small { display: block; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-r { text-align: right; white-space: nowrap; }
+.sec-r b { font-size: 13px; }
+.promote { align-self: flex-end; min-height: 40px; }
+.all { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 4px 0 12px; }
+.all > .sec-h { border: 0; border-radius: 0; min-height: 48px; }
+.flt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+.flt input { width: 100%; min-height: 44px; border: 1px solid var(--ink-3); border-radius: 10px; padding: 0 12px; font-size: 16px; background: var(--surface); color: var(--ink); }
+.all-g { margin: 0; padding: 7px 12px 6px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); background: var(--surface-2); border-top: 1px solid var(--line); }
+.all-row { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; min-height: 54px; padding: 4px 8px 4px 12px; border-top: 1px solid var(--line); }
+.all-row .to { font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.all-row .eta { font-size: 14px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+.all-row .eta.soon { color: var(--good); }
+.all-row .eta.off { font-weight: 400; font-size: 12px; color: var(--ink-3); }
+.all-row .eta small { display: block; font-weight: 400; font-size: 11px; color: var(--ink-3); }
+.wbtn { min-height: 44px; min-width: 66px; border: 1px solid var(--ink); border-radius: 10px; background: var(--surface); font-size: 13px; font-weight: 700; cursor: pointer; }
+.wbtn[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+#allFoot { padding: 0 8px; }
+#allFoot:empty { display: none; }
+#geoNote { margin: 0 2px 4px; }
+#geoNote .link { padding: 2px 4px; }
+.credit { margin: 10px 2px 0; }                       /* 資料來源：開放資料的授權要求標示提供機關 */
+/* 很窄的手機（寬 360 以下）：路線牌與按鈕縮一點，往哪裡與幾分才不會被截掉 */
+@media (max-width: 360px) {
+  .rt-main { grid-template-columns: 86px minmax(0, 1fr) auto; gap: 8px; padding: 10px; }
+  .big { font-size: 36px; }
+  .rt-later b { font-size: 16px; }
+  .all-row { grid-template-columns: 52px minmax(0, 1fr) auto auto; gap: 8px; padding-left: 10px; }
+  .all-row .to { font-size: 13px; }
+  .wbtn { min-width: 58px; }
+  .badge.sm b { font-size: 13px; }
+}
+
+/* ---------- 找公車：搜尋、附近的站牌、選方向與站 ---------- */
+.qlbl { display: block; font-size: 12.5px; color: var(--ink-2); margin-bottom: 4px; }
+.qrow { display: flex; gap: 6px; }
+.qrow input { flex: 1; min-width: 0; min-height: 48px; border: 1px solid var(--ink-3); border-radius: 12px; padding: 0 14px; font-size: 17px; background: var(--surface); }
+.qrow .btn { min-height: 48px; border-radius: 12px; padding: 0 14px; font-size: 14px; font-weight: 700; }
+#findBody h2 { display: flex; justify-content: space-between; align-items: center; font-size: 14px; margin: 16px 0 8px; min-height: 24px; }
+#findBody h2 .link { padding: 0 4px; font-weight: 400; }
+#findBody .hint { margin-top: 14px; }
+#findBody .leave { margin: 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chips button { border: 1px solid var(--line); border-radius: 999px; min-height: 44px; padding: 0 14px; background: var(--surface); font-size: 14px; font-weight: 700; cursor: pointer; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+.pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); min-height: 60px; padding: 8px 12px; cursor: pointer; }
+.card > .pick:last-child { border-bottom: 0; }
+.pick > span { min-width: 0; }
+.pick b { display: block; font-size: 15px; }
+.pick small { display: block; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick em { font-style: normal; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.pick.route { grid-template-columns: 70px minmax(0, 1fr) auto; }
+.pick.stop-pick, .pick.end { grid-template-columns: 26px minmax(0, 1fr) auto; min-height: 48px; padding: 4px 12px; }
+.pick.end { cursor: default; color: var(--ink-3); }
+.pick i { font-style: normal; font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.pick.stop-pick b, .pick.end b { font-size: 14.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick.stop-pick em, .pick.nearest em { font-size: 13.5px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pick em.soon { color: var(--good); }
+.pick em.off { font-weight: 400; color: var(--ink-3); }
+.pick.nearest { border: 2px solid var(--ink); border-radius: 14px; background: var(--surface); margin-bottom: 10px; min-height: 64px; }
+.pick.nearest b { font-size: 16px; }
+.pick.nearest em { display: block; font-size: 15px; }
+.rp-h { display: grid; grid-template-columns: auto 76px minmax(0, 1fr); gap: 10px; align-items: center; margin-bottom: 10px; }
+.rp-h .btn.icon { width: 44px; height: 44px; border-radius: 12px; }
+.rp-h b { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-h small { display: block; font-size: 12px; color: var(--ink-2); }
+.seg.dirs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; width: 100%; border-radius: 14px; padding: 4px; margin-bottom: 10px; }
+.seg.dirs button { min-height: 44px; border-radius: 10px; font-weight: 700; white-space: normal; }
+#routePage .hint { margin: 0 2px 8px; }
+
+/* ---------- 地圖＋底下的清單 ---------- */
+#view-map { position: relative; overflow: hidden; --sheet-h: 172px; }
+#view-map.sheet-open { --sheet-h: 56%; }
+#map { position: absolute; inset: 0; background: var(--bg); }
+.night-tiles { filter: invert(1) hue-rotate(200deg) brightness(.78) contrast(.92) saturate(.35); }
+.leaflet-container { font-family: var(--font); }
+.leaflet-bar a, .leaflet-bar a:hover { background: var(--surface); color: var(--ink); border-bottom-color: var(--line); }      /* 放大縮小鈕跟著深淺色（深色時不要一塊亮白） */
+.leaflet-bar { border-color: var(--line) !important; }
+.leaflet-touch .leaflet-bar a, .leaflet-bar a { width: 40px; height: 40px; line-height: 40px; font-size: 22px; }     /* 放大縮小鈕：手指好按 */
+#view-map .leaflet-bottom { bottom: var(--sheet-h); transition: bottom .2s ease; }      /* 地圖來源標示留在清單上方，不被蓋住 */
+.busm {
+  position: absolute; transform: translate(-50%, -50%); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+  font: 700 12.5px/1 var(--font); padding: 4px 7px 4px 5px; border-radius: 999px;
+  background: var(--c); color: #0b1120; border: 2px solid #0b1120; box-shadow: 0 1px 6px rgba(0, 0, 0, .55);
+}
+.busm.d1 { background: #0b1120; color: var(--c); border-color: var(--c); }     /* 返程：空心 */
+.busm .arrow { display: inline-flex; width: 12px; height: 12px; }
+.busm .arrow svg { width: 12px; height: 12px; fill: currentColor; }
+/* 平常只有箭頭＋幾分後到這個地點；選中才展開成路線名與車牌（車擠在一起時長條會疊成一團） */
+.busm .bm { font-variant-numeric: tabular-nums; }
+.busm .bm:empty, .busm .bv, .busm .bp { display: none; }
+.busm .bp { font-weight: 600; font-variant-numeric: tabular-nums; }
+.busm.past { opacity: .6; padding: 4px; }                                      /* 已經過了這個地點、或不會到這裡的車 */
+.busm.sel { opacity: 1; padding: 4px 8px 4px 5px; box-shadow: 0 0 0 3px #fff, 0 0 14px 4px var(--c); }
+.busm.sel .bv, .busm.sel .bp { display: inline; }
+.busm.sel .bm { display: none; }
+.zoom-far .stop-dot { display: none; }
+.zoom-min .busm:not(.sel) .bm { display: none; }                               /* 縮小看全線：只剩箭頭 */
+.zoom-min .busm:not(.sel) { padding: 2px; border-width: 1.5px; gap: 0; }
+.zoom-min .busm:not(.sel) .arrow, .zoom-min .busm:not(.sel) .arrow svg { width: 9px; height: 9px; }
+.stop-pop .leaflet-popup-content-wrapper { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); }
+.stop-pop .leaflet-popup-tip { background: var(--surface); border: 1px solid var(--line); }
+.stop-pop .leaflet-popup-content { margin: 10px 0 6px; font: 13px/1.5 var(--font); }
+.stop-pop a.leaflet-popup-close-button { color: var(--ink-3); }
+.pop-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin: 0 26px 6px 12px; }
+.pop-h b { font-size: 14px; }
+.pop-dir { display: block; color: var(--ink-3); font-size: 11.5px; }
+.pop-f { margin: 2px 8px 0; }
+.pop .arow .eta { font-size: 17px; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; height: var(--sheet-h); z-index: 600; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; box-shadow: 0 -6px 18px rgba(0, 0, 0, .28); transition: height .2s ease; }
+.sheet-h { flex: none; border: 0; background: none; cursor: pointer; touch-action: none; padding: 6px 14px 4px; min-height: 46px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.grip { width: 40px; height: 5px; border-radius: 3px; background: var(--ink-3); opacity: .6; }
+.sheet-t { align-self: stretch; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.sheet-t b { font-size: 16px; }
+.sheet-t b small { margin-left: 8px; font-weight: 400; }
+.sheet-t small { font-size: 12px; color: var(--ink-2); }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 6px; }
+.sheet-body .seg.places { display: flex; margin: 0 12px 6px; }
+.sheet-body .arow[aria-current="true"] { background: var(--surface-2); }
+/* 選中的那台車：接下來各站 */
+.bc-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
+.bc-h > div { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bc-h b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.bc-dir { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.bc-x { font-size: 20px; line-height: 1; width: 44px; height: 44px; border: 0; border-radius: 8px; background: none; color: var(--ink-2); cursor: pointer; }
+.bc-x:hover { background: var(--surface-2); }
+.bc-sub { margin: 0 12px 6px; color: var(--ink-3); font-size: 11.5px; }
+.bc-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.bc-stop { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 0 8px; width: 100%; min-height: 44px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 7px 12px; cursor: pointer; }
+.bc-stop:hover { background: var(--surface-2); }
+.bc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-name small, .bc-eta small { display: block; font-size: 10.5px; color: var(--ink-3); }
+.bc-eta { text-align: right; white-space: nowrap; }
+.bc-eta b { font-variant-numeric: tabular-nums; }
+.bc-eta small { color: var(--warn); }
+@media (min-width: 701px) {
+  /* 寬螢幕：清單是左上角的一塊面板，一直開著 */
+  #view-map, #view-map.sheet-open { --sheet-h: 0px; }
+  .sheet { left: 12px; right: auto; top: 12px; bottom: 22px; width: 340px; height: auto; border: 1px solid var(--line); border-radius: 12px; }
+  .sheet-h { cursor: default; }
+  .grip, .sheet-t > small { display: none; }
+}
+
+/* ---------- 路線條狀圖 ---------- */
+.strip { list-style: none; margin: 0; padding: 0; }
+.stop { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr) 40px; align-items: center; gap: 0 10px; padding: 6px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 60px; }
+.stop.flash { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.rail { position: relative; align-self: stretch; }
+.rail::before { content: ""; position: absolute; left: 9px; top: -7px; bottom: -7px; width: 4px; background: var(--line); border-radius: 2px; }
+.rail .dot { position: absolute; left: 4px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; background: var(--bg); border: 3px solid var(--ink-2); }
+.sname { min-width: 0; }
+.sname b { font-weight: 600; }
+.only-tag { display: block; font-size: 11px; color: var(--ink-3); }
+.arr { min-width: 0; }
+.arr .eta { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.arr.second .eta { font-size: 14px; font-weight: 700; color: var(--ink-2); }
+.arr .eta.soon { color: var(--good); }
+.arr .meta { font-size: 11.5px; color: var(--ink-3); display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+.arr .none { color: var(--ink-3); font-size: 12px; }
+.star { font-size: 20px; min-width: 40px; min-height: 40px; background: none; border: 0; color: var(--ink-3); cursor: pointer; padding: 2px 4px; }
+.bus-row { display: grid; grid-template-columns: 22px 1fr; gap: 0 10px; padding: 2px 0; }
+.bus { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 3px 8px; cursor: pointer; }
+.bus svg { width: 14px; height: 14px; fill: var(--c); flex: none; }
+.bus .plate { font-variant-numeric: tabular-nums; }
+.bus .dist { color: var(--ink-3); }
+.bus-row .rail .bdot { position: absolute; left: 3px; top: 50%; margin-top: -8px; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px var(--bg); }
+@media (max-width: 640px) {
+  /* 手機：站名一行，下一班、下下班各佔一整行（時間與車牌排在同一行），一站約三行高 */
+  .stop { grid-template-columns: 22px minmax(0, 1fr) 40px; grid-template-areas: "rail name star" "rail first star" "rail second star"; gap: 1px 10px; }
+  .stop .rail { grid-area: rail; } .stop .sname { grid-area: name; } .stop .arr.first { grid-area: first; } .stop .arr.second { grid-area: second; } .stop .star { grid-area: star; }
+  .stop .arr { display: flex; align-items: baseline; gap: 8px; }
+  .stop .arr:empty { display: none; }
+  .stop .arr .eta { font-size: 15px; flex: none; min-width: 4.4em; }
+  .stop .arr.second .eta { font-size: 13px; }
+  .stop .arr .eta .early { display: none; }                 /* 最早時間在等車頁與地圖的站牌視窗看 */
+  .stop .arr .meta { flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+}
+
+/* ---------- 時距圖 ---------- */
+#marey svg { display: block; width: 100%; height: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+#marey text { font: 11px var(--font); fill: var(--ink-3); }
+#marey .nowt { fill: var(--ink); }
+#marey .axis { stroke: var(--line); }
+#marey .now { stroke: var(--ink); stroke-width: 1; }

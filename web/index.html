@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<script>window.__errs = []; addEventListener("error", (e) => __errs.push((e.error && e.error.stack) || e.message));</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>公車即時</title>
+<meta name="description" content="常用站的公車即時看板：關注的路線下一班幾分到、最早幾分、現在該不該出門；可以找別的站與路線，另有即時地圖。">
+<meta name="theme-color" content="#121a2c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="公車">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>公車即時</h1>
+  <p class="status" id="status" role="status">載入中…</p>
+  <button type="button" class="btn icon" id="onceBtn" aria-label="立刻更新" title="立刻更新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg></button>
+</header>
+
+<main>
+  <section class="view" id="view-wait" role="tabpanel">
+    <div class="wrap">
+      <div class="bar row">
+        <div class="seg places" role="group" aria-label="地點" id="placeSeg"></div>
+        <button type="button" class="btn find" id="findBtn" title="找別的站：路線號碼、站名、附近的站牌"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>別的站</button>
+      </div>
+      <div class="tempbar" id="tempBar" hidden>
+        <span>臨時查看</span>
+        <button type="button" class="btn solid" id="saveTemp">存成常用</button>
+        <button type="button" class="btn" id="dropTemp">移除</button>
+      </div>
+      <div id="leave"></div>
+      <div id="board"></div>
+      <section class="all" id="allWrap" hidden>
+        <button type="button" class="sec-h" id="allBtn" aria-expanded="false" aria-controls="allBody"></button>
+        <div id="allBody" hidden>
+          <div class="flt" id="fltRow"><label for="flt">只看</label><input type="text" id="flt" autocomplete="off" placeholder="輸入路線號碼"></div>
+          <div id="allList"></div>
+          <div id="allFoot"></div>
+        </div>
+      </section>
+      <p class="hint" id="geoNote"></p>
+      <p class="hint credit">資料：臺北市、新北市公車動態・交通部 TDX</p>
+    </div>
+  </section>
+
+  <section class="view" id="view-map" role="tabpanel" hidden>
+    <div id="map"></div>
+    <div class="sheet" id="sheet">
+      <button type="button" class="sheet-h" id="sheetToggle" aria-expanded="false" aria-controls="sheetBody"></button>
+      <div class="sheet-body" id="sheetBody"></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-find" role="tabpanel" hidden>
+    <div class="wrap">
+      <div id="findHome">
+        <label class="qlbl" for="q">路線號碼或站名</label>
+        <div class="qrow">
+          <input type="text" id="q" inputmode="search" enterkeyhint="search" autocomplete="off" placeholder="例如 307、西門">
+          <button type="button" class="btn" id="qClear" hidden>清除</button>
+        </div>
+        <div id="findBody"></div>
+      </div>
+      <div id="routePage" hidden></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-route" role="tabpanel" hidden>
+    <div class="wrap">
+      <div class="bar">
+        <select id="groupSel" aria-label="路線與方向"></select>
+        <input type="search" id="find" list="stopNames" placeholder="找站名…" aria-label="找站名">
+        <datalist id="stopNames"></datalist>
+        <button type="button" class="btn" id="mareyBtn" title="時間與沿線位置的圖：看車有沒有擠在一起">時距圖</button>
+      </div>
+      <ol class="strip" id="strip"></ol>
+    </div>
+  </section>
+
+  <section class="view" id="view-marey" role="tabpanel" hidden>
+    <div class="wrap">
+      <div class="bar">
+        <button type="button" class="btn icon" id="mareyBack" aria-label="回到路線" title="回到路線"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <select id="groupSel2" aria-label="路線與方向"></select>
+        <span class="hint">實線＝實際，虛線＝推估</span>
+      </div>
+      <div id="marey"></div>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs" role="tablist" aria-label="檢視">
+  <button type="button" role="tab" data-tab="wait"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>等車</button>
+  <button type="button" role="tab" data-tab="map"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Zm0 0v14m6-12v14"/></svg>地圖</button>
+  <button type="button" role="tab" data-tab="find"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>找公車</button>
+  <button type="button" role="tab" data-tab="route"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v16M6 6h1m-1 6h1m-1 6h1m4-12h9m-9 6h9m-9 6h9"/></svg>路線</button>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data/app-data.js"></script>
+<script src="data/calibration.js"></script>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

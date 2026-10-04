@@ -1,0 +1,160 @@
+:root {
+  --bg: #0b1120;
+  --surface: #121a2c;
+  --surface-2: #18223a;
+  --line: #24304a;
+  --ink: #e6ebf5;
+  --ink-2: #a3aec4;
+  --ink-3: #6f7a91;
+  --dark-route: #2b3448;
+  --accent: #f5a524;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --radius: 12px;
+  --gap: 12px;
+  --font: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 var(--font);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+/* ---------- 頁首 ---------- */
+.top {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.route-badge {
+  font-weight: 800; font-size: 20px; letter-spacing: .02em;
+  padding: 2px 10px; border-radius: 8px;
+  background: var(--accent); color: #1a1205;
+}
+h1 { font-size: 17px; margin: 0; font-weight: 700; }
+.sub { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+.dir-toggle { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.dir-toggle button {
+  font: inherit; color: var(--ink-2); background: transparent; border: 0;
+  padding: 5px 14px; border-radius: 999px; cursor: pointer;
+}
+.dir-toggle button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+.status { margin: 0 0 0 auto; color: var(--ink-2); font-size: 12.5px; text-align: right; }
+.status .err { color: var(--bad); }
+.badge {
+  display: inline-block; font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 999px;
+  background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); vertical-align: 1px;
+}
+.badge.sim { color: #1a1205; background: var(--warn); border-color: transparent; }
+
+/* ---------- 版面 ---------- */
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 440px; min-height: 0; }
+.map-wrap { position: relative; min-height: 0; }
+#map { position: absolute; inset: 0; background: var(--bg); }
+.panel { overflow-y: auto; padding: var(--gap); display: flex; flex-direction: column; gap: var(--gap); border-left: 1px solid var(--line); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.panel h2 { font-size: 13.5px; margin: 0 0 8px; font-weight: 700; }
+.hint { font-weight: 400; color: var(--ink-3); font-size: 11.5px; margin-left: 6px; }
+
+/* ---------- 地圖上的浮動卡 ---------- */
+.legend {
+  position: absolute; top: 12px; left: 56px; z-index: 500;
+  padding: 8px 12px; font-size: 12px; color: var(--ink-2);
+  display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: calc(100% - 72px);
+}
+.legend .sw { display: inline-block; width: 18px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.timebar {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 500;
+  display: flex; align-items: center; gap: 14px; padding: 10px 14px;
+}
+.clock { min-width: 92px; }
+.clock-label { display: block; font-size: 11px; color: var(--ink-3); }
+.clock-time { font-size: 22px; font-variant-numeric: tabular-nums; }
+.timebar input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
+.pill {
+  font: inherit; font-size: 12.5px; color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+}
+.pill:disabled { opacity: .45; cursor: default; }
+
+/* ---------- 狀態卡 ---------- */
+.cards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+.vcard { padding: 10px 12px; }
+.vcard .vname { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-bottom: 4px; flex-wrap: wrap; }
+.vcard .vlabel { white-space: nowrap; }
+.vcard .vname .badge { margin-left: auto; }
+.vcard .chip { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.night-tiles { filter: invert(1) hue-rotate(200deg) brightness(.78) contrast(.92) saturate(.35); }
+.vcard .state { font-size: 15px; font-weight: 700; margin: 2px 0; }
+.vcard .detail { font-size: 12px; color: var(--ink-2); }
+.vcard .note { font-size: 11.5px; color: var(--warn); margin-top: 4px; }
+.conf-high { color: var(--good); }
+.conf-medium { color: var(--warn); }
+.conf-low { color: var(--bad); }
+
+/* ---------- 時距圖 ---------- */
+.chart-card { padding: 10px 12px; }
+#marey svg { display: block; width: 100%; height: auto; }
+#marey text { font: 10.5px var(--font); fill: var(--ink-3); }
+#marey .axis { stroke: var(--line); }
+#marey .now { stroke: var(--ink); stroke-width: 1; }
+#marey .view { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; }
+
+/* ---------- 站表 ---------- */
+.list-card { padding: 10px 12px; }
+table.stops { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.stops th { text-align: left; color: var(--ink-3); font-weight: 600; font-size: 11.5px; padding: 4px 6px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); }
+table.stops td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.stops td.name { color: var(--ink); }
+table.stops tr { cursor: pointer; }
+table.stops tr:hover td { background: var(--surface-2); }
+table.stops tr.dark td { color: var(--ink-3); }
+table.stops tr.dark td.name { text-decoration: line-through; text-decoration-color: var(--ink-3); }
+.t { font-variant-numeric: tabular-nums; font-weight: 700; }
+.in { color: var(--ink-3); font-size: 11px; margin-left: 3px; }
+.tag { font-size: 10.5px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); margin-left: 4px; white-space: nowrap; }
+.tag.official { color: var(--good); }
+.passed { color: var(--ink-3); }
+
+/* ---------- 說明 ---------- */
+.notes { padding: 10px 12px; font-size: 12px; color: var(--ink-2); }
+.notes p { margin: 0 0 6px; }
+.notes ul { margin: 0; padding-left: 18px; }
+
+/* ---------- 地圖標記 ---------- */
+.lastbus {
+  width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, .18), 0 0 16px 4px var(--c, #fff);
+  background: var(--c, #fff);
+}
+.lastbus.pred { background: transparent; border-style: dashed; box-shadow: 0 0 10px 2px var(--c, #fff); }
+.lastbus-label {
+  font: 700 11px var(--font); color: #0b1120; background: #fff; padding: 1px 5px; border-radius: 4px;
+  white-space: nowrap; transform: translate(14px, -8px);
+}
+.leaflet-container { font-family: var(--font); }
+.leaflet-tooltip { font-family: var(--font); }
+
+/* ---------- 窄螢幕 ---------- */
+@media (max-width: 860px) {
+  body { overflow: auto; display: block; }
+  .top { padding: 10px 16px; }
+  .status { margin: 0; text-align: left; width: 100%; }
+  .layout { display: block; }
+  .map-wrap { height: 62vh; }
+  .panel { border-left: 0; padding: 12px 16px 24px; overflow: visible; }
+  .cards { grid-template-columns: 1fr; }
+  .legend { left: 52px; }
+  .timebar { flex-wrap: wrap; gap: 8px 12px; }
+  .timebar input[type="range"] { flex-basis: 100%; order: 3; }
+}

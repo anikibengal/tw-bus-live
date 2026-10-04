@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<script>window.__errs = []; addEventListener("error", (e) => __errs.push((e.error && e.error.stack) || e.message));</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>307 末班車即時圖</title>
+<meta name="description" content="台北公車 307 的末班車現在開到哪、各站末班還有幾分鐘；拖動時間軸看末班車熄燈的預測。">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="route-badge" id="routeBadge">307</span>
+    <div>
+      <h1>末班車即時圖</h1>
+      <p class="sub" id="sub">—</p>
+    </div>
+  </div>
+  <div class="dir-toggle" role="group" aria-label="行駛方向" id="dirToggle"></div>
+  <p class="status" id="status" role="status">載入中…</p>
+</header>
+
+<main class="layout">
+  <section class="map-wrap" aria-label="路線地圖">
+    <div id="map"></div>
+    <div class="legend card" id="legend"></div>
+    <div class="timebar card" aria-label="顯示時刻">
+      <div class="clock">
+        <span class="clock-label" id="viewLabel">現在</span>
+        <strong class="clock-time" id="viewTime">--:--</strong>
+      </div>
+      <input type="range" id="slider" min="0" max="150" step="1" value="0" aria-label="顯示時刻：現在起幾分鐘後">
+      <button type="button" class="pill" id="nowBtn">回到現在</button>
+    </div>
+  </section>
+
+  <aside class="panel" aria-label="末班車狀態">
+    <section class="cards" id="cards"></section>
+    <section class="card chart-card">
+      <h2>時間 × 距離 <span class="hint">實線＝實際軌跡，虛線＝末班車推估</span></h2>
+      <div id="marey"></div>
+    </section>
+    <section class="card list-card">
+      <h2>各站末班 <span class="hint">時刻後的標籤是推估來源</span></h2>
+      <div id="stoplist"></div>
+    </section>
+    <footer class="notes card" id="notes"></footer>
+  </aside>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data/route-307.js"></script>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
