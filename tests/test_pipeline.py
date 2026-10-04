@@ -274,6 +274,50 @@ class CityBuildTest(unittest.TestCase):
         self.assertEqual(none, {"type": "none"})
         self.assertEqual(last_n["mon"], "22:10")
 
+    def test_frequency_schedule_past_midnight(self):
+        """末班在凌晨（比首班小、在 03:00 營運日換日點之前）＝跨午夜：時段的 end 寫成 24 時以後，末班時刻維持原本的寫法。"""
+        from build_city import frequency_schedule, window_end
+        ends = lambda r, g=0: [(w["start"], w["end"]) for w in frequency_schedule(r, g)[0].get("windows", [])]  # noqa: E731
+        # 棕2、藍29 這一類：首班 05:40、末班 00:00（午夜那一班）；假日末班 00:30
+        r = _route(1, 10, goFirstBusTime="0540", goLastBusTime="0000", holidayGoFirstBusTime="0600", holidayGoLastBusTime="0030")
+        sch, last = frequency_schedule(r, 0)
+        self.assertEqual(sch["windows"], [
+            {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "05:40", "end": "24:00", "minHeadway": 4, "maxHeadway": 10},
+            {"days": ["sat", "sun"], "start": "06:00", "end": "24:30", "minHeadway": 7, "maxHeadway": 10}])
+        self.assertEqual((last["mon"], last["fri"], last["sat"], last["sun"]), ("00:00", "00:00", "00:30", "00:30"),
+                         "末班時刻不改寫：畫面上的「起站末班」照資料原本的寫法")
+        self.assertEqual(ends(r, 1), [("05:30", "22:40"), ("05:30", "22:40")], "返程不跨午夜：不受影響")
+        # 返程跨午夜、假日欄位空白沿用平日：兩個時段都跨午夜
+        self.assertEqual(ends(_route(1, 10, backLastBusTime="0020"), 1), [("05:30", "24:20"), ("05:30", "24:20")])
+        # 夜間公車：23:00 發到 00:20
+        self.assertEqual(ends(_route(1, 10, goFirstBusTime="2300", goLastBusTime="0020",
+                                     holidayGoFirstBusTime="", holidayGoLastBusTime="")), [("23:00", "24:20")] * 2)
+        # 換日點：02:59 還是深夜那一班；03:00 起是清晨的時刻，比首班小就是資料有問題，不產生時段
+        self.assertEqual([window_end("05:00", x) for x in ("00:00", "00:05", "02:59", "03:00", "04:59", "05:00", "22:10")],
+                         ["24:00", "24:05", "26:59", "03:00", "04:59", "05:00", "22:10"])
+        self.assertEqual(window_end("23:30", "00:05"), "24:05")
+        self.assertEqual(window_end("01:00", "02:00"), "02:00", "末班比首班晚：不是跨午夜，不改寫")
+        self.assertEqual(window_end("02:00", "02:00"), "02:00", "首末班同一個時刻：不是跨午夜")
+        self.assertEqual(ends(_route(1, 10, goLastBusTime="0259"))[0], ("05:00", "26:59"))
+        for bad in ("0300", "0459", "0500"):             # 0500＝首末班同一個時刻（一天一班）：時段長度是零
+            sch_b, last_b = frequency_schedule(_route(1, 10, goLastBusTime=bad, holidayGoFirstBusTime="", holidayGoLastBusTime=""), 0)
+            self.assertEqual(sch_b, {"type": "none"}, bad)
+            self.assertEqual(last_b["mon"], f"{bad[:2]}:{bad[2:]}", "時段不產生，末班時刻還在")
+        # 沒有班距（逐班表路線）：跨午夜也不產生班距表
+        self.assertEqual(frequency_schedule(_route(1, 10, goLastBusTime="0000", peakHeadway="", offPeakHeadway="",
+                                                   holidayPeakHeadway=""), 0)[0], {"type": "none"})
+
+    def test_past_midnight_window_survives_operator_merge(self):
+        """共營路線（站序相同的子路線併成一個）：跨午夜的時段和不跨午夜的併在一起時，end 取跨午夜的那個。"""
+        from build_city import build_source
+        routes = [_route(2, 20, sub="測(甲客運)", goLastBusTime="2330", holidayGoLastBusTime="2330"),
+                  _route(2, 21, sub="測(乙客運)", goLastBusTime="0000", holidayGoLastBusTime="0030")]
+        stops = [_stop(1, 2, 0, 0, 0), _stop(2, 2, 1, 0, 1)]
+        for order in (routes, routes[::-1]):
+            files, _, _ = build_source("tpe", order, stops, _path(20, [1, 2]) + _path(21, [1, 2]))
+            (v,) = files["tpe:2"]["variants"]
+            self.assertEqual([(w["start"], w["end"]) for w in v["schedule"]["windows"]], [("05:00", "24:00"), ("06:00", "24:30")])
+
     def _simple(self):
         """路線 1：子路線 10 涵蓋去返兩向；子路線 11 是去程的區間車（少一站）；子路線 10 被兩家業者各登錄一次。"""
         routes = [_route(1, 10), _route(1, 10), _route(1, 11, sub="測(區間)")]

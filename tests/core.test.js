@@ -324,6 +324,56 @@ test("班距表路線：回傳目前時段的班距", () => {
   assert.equal(C.headwayNow(FQ, T("23:00")), null);
 });
 
+// 末班在凌晨的路線（棕2、藍29：首班 05:40、末班 00:00）：建置時把時段的 end 寫成 24 時以後（build_city.py 的 window_end）
+const NIGHT = (windows) => ({ ...FQ, subRouteId: "903", routeId: "93", schedule: { type: "frequency", windows } });
+const SAT = { min: 12, max: 20 }, SUN = { min: 15, max: 30 };
+const win = (start, end, days, hw) => ({ start, end, minHeadway: hw.min, maxHeadway: hw.max, days });
+
+test("班距表路線：跨午夜的時段到隔天凌晨還算同一個營運日", () => {
+  // 週六 05:40–00:30（寫成 24:30）、週日 06:00–00:00（寫成 24:00）
+  const v = NIGHT([win("05:40", "24:30", ["sat"], SAT), win("06:00", "24:00", ["sun"], SUN)]);
+  const D4 = "2026-10-04", D5 = "2026-10-05";                     // 週日、週一
+  for (const [hhmm, day, want, why] of [
+    ["05:39", undefined, null, "週六首班前"],
+    ["05:40", undefined, SAT, "含起"],
+    ["23:30", undefined, SAT, "午夜前"],
+    ["23:59", undefined, SAT, ""],
+    ["00:00", D4, SAT, "過了午夜，末班 00:30 還沒發"],
+    ["00:10", D4, SAT, "週日凌晨用的是週六的時段"],
+    ["00:29", D4, SAT, ""],
+    ["00:30", D4, null, "末班時刻已到（不含迄）"],
+    ["02:59", D4, null, "週六的營運日還沒結束，但末班已發"],
+    ["03:00", D4, null, "換成週日的營運日：還沒到首班"],
+    ["06:00", D4, SUN, "週日的時段"],
+    ["23:30", D4, SUN, "週日午夜前"],
+    ["00:00", D5, null, "週日末班 00:00（寫成 24:00）：午夜一到就結束"],
+    ["00:10", D5, null, "週一凌晨不會撿到週六的時段"],
+  ]) assert.deepEqual(C.headwayNow(v, T(hhmm, day)), want, `${day || "2026-10-03"} ${hhmm} ${why}`);
+});
+
+test("班距表路線：營運日 03:00 換日，凌晨的時段不會算到當天的星期", () => {
+  // 只有週日有時段：週日凌晨 00:10 屬於週六的營運日，不適用；週一凌晨 00:10 才是週日深夜
+  const sunOnly = NIGHT([win("06:00", "24:30", ["sun"], SUN)]);
+  assert.equal(C.headwayNow(sunOnly, T("00:10", "2026-10-04")), null);
+  assert.deepEqual(C.headwayNow(sunOnly, T("00:10", "2026-10-05")), SUN);
+  // 換日點本身（人工的時段，建置不會產生 27:00）：02:59 還是週六、03:00 起是週日
+  const edge = NIGHT([win("05:40", "27:00", ["sat"], SAT), win("03:00", "22:00", ["sun"], SUN)]);
+  assert.deepEqual(C.headwayNow(edge, T("02:59", "2026-10-04")), SAT);
+  assert.deepEqual(C.headwayNow(edge, T("03:00", "2026-10-04")), SUN);
+  assert.equal(C.hhmmToMin("24:30"), 1470);
+  assert.equal(C.hhmmToMin("26:59"), 1619);
+});
+
+test("跨午夜的時段：凌晨起點還沒發車的站照樣補一筆依班距的上限", () => {
+  const v = NIGHT([win("05:40", "24:30", ["sat"], SAT)]);
+  const at2 = (hhmm, day) => at(C.routeArrivals(C.createTracker([v]), "903", null, T(hhmm, day)).perStop[3]);
+  assert.deepEqual(at2("23:30"), [[null, "00:00", "班距"]]);              // 23:30 + 班距上限 20 + 3 km ÷ 18 km/h
+  assert.deepEqual(at2("00:10", "2026-10-04"), [[null, "00:40", "班距"]]);
+  assert.deepEqual(at2("00:30", "2026-10-04"), [], "末班已發：不再補");
+  assert.deepEqual(at2("02:59", "2026-10-04"), []);
+  assert.deepEqual(at2("03:00", "2026-10-04"), []);
+});
+
 test("只有班距的路線：沒車的站補一筆依班距的上限", () => {
   const tr = trackerWith([], [FQ]);
   const r = C.routeArrivals(tr, "902", null, T("09:30"));

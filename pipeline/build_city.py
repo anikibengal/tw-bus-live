@@ -29,6 +29,7 @@ from sources import BLOB_HOST, BLOB_SOURCES, BlobStatic  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 WEEKDAYS, WEEKEND = ["mon", "tue", "wed", "thu", "fri"], ["sat", "sun"]
+ROLLOVER = "03:00"             # 營運日換日點（和 web/core.js 的 ROLLOVER_H 一致）：凌晨這之前的時刻算前一個營運日的深夜
 APPROX_MAX_OFFSET_M = 400      # 直線近似的路線：車離折線這麼遠以內都算在路線上（彎道、橋、匝道會偏離弦線）
 SHAPE_FIT_M = 100              # 路線軌跡要每一站都在這個距離內才算套得上
 SHAPE_BACKTRACK_KM = 0.05      # 逐站投影容許的倒退（站牌在路口兩側時會有幾十公尺的前後誤差）
@@ -170,8 +171,20 @@ def parse_headway(s: str | None) -> tuple[int, int] | None:
     return (min(lo, hi), max(lo, hi))
 
 
+def window_end(start: str, last: str) -> str:
+    """班距時段的結束時刻。末班在凌晨（比首班小、而且在營運日換日點之前）＝跨午夜的那一班，寫成 24 時以後：
+    '00:00' → '24:00'、'00:30' → '24:30'。網頁用「營運日 00:00 起算的分鐘數」比對時段（web/core.js 的 headwayNow），
+    凌晨 00:10 是 1450 分，這樣寫 23:30 與隔天 00:10 才會落在同一個時段裡。其餘原樣回傳。"""
+    if last < start and last < ROLLOVER:
+        return f"{int(last[:2]) + 24}:{last[3:]}"
+    return last
+
+
 def frequency_schedule(route: dict, go_back: int) -> tuple[dict, dict]:
-    """路線資料的首末班與班距 → (班距表, 各星期幾的末班時刻)。沒有班距（逐班表路線）時班距表是 none。"""
+    """路線資料的首末班與班距 → (班距表, 各星期幾的末班時刻)。沒有班距（逐班表路線）時班距表是 none。
+
+    末班時刻維持資料原本的寫法（午夜末班是 '00:00'，畫面上的「起站末班」照這個寫）；只有班距時段的 end 改寫成跨午夜的寫法。
+    """
     side = "go" if go_back == 0 else "back"
     side_h = "holidayGo" if go_back == 0 else "holidayBack"
     windows, last = [], {}
@@ -187,8 +200,9 @@ def frequency_schedule(route: dict, go_back: int) -> tuple[dict, dict]:
         hs = [h for h in (parse_headway(route.get(k)) for k in peaks) if h]
         if not hs:                                    # 假日欄位空白時沿用平日班距
             hs = [h for h in (parse_headway(route.get(k)) for k in ("peakHeadway", "offPeakHeadway")) if h]
-        if start and end and hs and start < end:
-            windows.append({"days": days, "start": start, "end": end,
+        close = window_end(start, end) if start and end else None
+        if close and hs and start < close:
+            windows.append({"days": days, "start": start, "end": close,
                             "minHeadway": min(h[0] for h in hs), "maxHeadway": max(h[1] for h in hs)})
     return ({"type": "frequency", "windows": windows} if windows else {"type": "none"}), last
 
