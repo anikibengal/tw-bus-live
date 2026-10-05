@@ -1479,6 +1479,47 @@ test("路線的顏色：同一個站十條各一個顏色，第十一條才重�
   for (const o of orders(keys)) assert.deepEqual(openPage(P10, files, W(keys), b.memo, o, builtin), b, o.join("→"));
 });
 
+// ---------------------------------------------------------------- 等車頁的列照到站時間排
+test("等車頁的列：越快到的越上面；分鐘數一樣維持原本的上下；沒有車的排最下面；有一列展開著就先不動", () => {
+  const K = ["甲", "乙", "丙", "丁"];
+  // 第一次：照畫面上的分鐘數
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 9, 乙: 2, 丙: 14, 丁: 5 }), ["乙", "丁", "甲", "丙"]);
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 9, 乙: 2, 丙: 14, 丁: 5 }, null, false), ["乙", "丁", "甲", "丙"]);
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 90, 乙: 100, 丙: 9, 丁: 10 }), ["丙", "丁", "甲", "乙"], "照數字的大小，不是照字");
+  // 到站是 0：排最上面，不是「沒有車」
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 3, 乙: 0, 丙: 1, 丁: 2 }), ["乙", "丙", "丁", "甲"]);
+  // 沒有車（null、沒給）：最下面，照原本的順序，不看上一次怎麼排
+  assert.deepEqual(C.arrivalOrder(K, { 甲: null, 乙: 7, 丁: 3 }), ["丁", "乙", "甲", "丙"]);
+  assert.deepEqual(C.arrivalOrder(K, {}), K);
+  assert.deepEqual(C.arrivalOrder(K, { 乙: 7 }, ["丙", "乙", "丁", "甲"]), ["乙", "甲", "丙", "丁"]);
+  // 分鐘數一樣：第一次照原本的順序
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 5, 乙: 5, 丙: 2, 丁: 5 }), ["丙", "甲", "乙", "丁"]);
+  // 分鐘數一樣：維持上一次畫面上的上下；上一次沒有的（剛關注的）排在後面、照原本的順序
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 5, 乙: 5, 丙: 2, 丁: 5 }, ["丁", "乙", "丙", "甲"]), ["丙", "丁", "乙", "甲"]);
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 5, 乙: 5, 丙: 5, 丁: 5 }, ["丁", "乙"]), ["丁", "乙", "甲", "丙"]);
+  // 分鐘數不一樣：照分鐘數，不管上一次怎麼排
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 4, 乙: 5, 丙: 6, 丁: 7 }, ["丁", "丙", "乙", "甲"]), K);
+  // 兩台差不多時間到的車：數字一樣時不互換，數字真的反過來才換
+  const two = ["甲", "乙"];
+  let o = C.arrivalOrder(two, { 甲: 5, 乙: 4 });
+  assert.deepEqual(o, ["乙", "甲"]);
+  assert.deepEqual((o = C.arrivalOrder(two, { 甲: 4, 乙: 4 }, o)), ["乙", "甲"]);
+  assert.deepEqual((o = C.arrivalOrder(two, { 甲: 3, 乙: 4 }, o)), ["甲", "乙"]);
+  assert.deepEqual((o = C.arrivalOrder(two, { 甲: 3, 乙: 3 }, o)), ["甲", "乙"]);
+  // 有一列展開著（hold）：列沒有增減就照上一次的，就算數字已經反過來、有的沒車了
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 1, 乙: 9, 丙: 3, 丁: null }, ["乙", "丙", "丁", "甲"], true), ["乙", "丙", "丁", "甲"]);
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 1, 乙: 9, 丙: 3, 丁: null }, ["乙", "丙", "丁", "甲"], false), ["甲", "丙", "乙", "丁"], "沒有展開：照常排");
+  // 展開著但列有增減、或還沒有上一次：照常排
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 1, 乙: 9, 丙: 3 }, ["乙", "丙", "甲"], true), ["甲", "丙", "乙", "丁"], "多了丁");
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 1, 乙: 9, 丙: 3 }, ["乙", "丙", "甲", "戊"], true), ["甲", "丙", "乙", "丁"], "丁換成戊");
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 1, 乙: 9, 丙: 3 }, ["乙", "丙", "甲", "丁", "戊"], true), ["甲", "丙", "乙", "丁"], "少了戊");
+  assert.deepEqual(C.arrivalOrder(K, { 甲: 1, 乙: 9 }, null, true), ["甲", "乙", "丙", "丁"]);
+  // 不改傳進來的順序
+  const keys = ["甲", "乙", "丙"], prev = ["丙", "乙", "甲"];
+  C.arrivalOrder(keys, { 甲: 3, 乙: 2, 丙: 1 }, prev);
+  assert.deepEqual([keys, prev], [["甲", "乙", "丙"], ["丙", "乙", "甲"]]);
+});
+
 // ---------------------------------------------------------------- 幫忙量路況的路線
 test("挑幫手路線：每次挑能補最多站間段的那一條；只經過一段的不挑；跳過指定的；挑到上限或沒有幫助為止", () => {
   // 關注的路線經過站牌 1→2→3→4→5（四個站間段）。其他路線：10 號經過 1、2、3、4、5；11 號經過 1、2、3；12 號經過 3、4、5；13 號只經過 4、5；14 號走反方向

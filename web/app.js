@@ -314,7 +314,7 @@ function startApp() {
   function placeView(pl) {
     const poles = placePoles(pl), wk = watch[pl.id] || [];
     const pos = placePositions(pl).map((x) => {
-      const watched = wk.map((u) => x.items.find((it) => it.unit === u)).filter(Boolean);       // 列的順序＝關注的先後，不隨到站時間變
+      const watched = wk.map((u) => x.items.find((it) => it.unit === u)).filter(Boolean);       // 這裡的順序＝關注的先後；等車頁畫的時候再照到站時間排（renderWait）
       return { ...x, watched, rows: watched.map((it) => {
         const info = itemInfo(it);
         return { it, info, label: info.label, toward: info.toward, col: info.col, arr: itemArrivals(it, info) };
@@ -531,12 +531,18 @@ function startApp() {
     return `<span class="badge${cls ? " " + cls : ""}${col ? "" : " plain"}"${col ? ` style="--c:${col}"` : ""}><b>${esc(main)}</b>${suffix ? `<small>${esc(suffix)}</small>` : ""}</span>`;
   }
   /** 大數字：幾分後到。 */
+  /** 大數字的分鐘數：沒有車 null、不到一分鐘（到站）0、依班距的是「≤」後面那個數。列的上下順序也照它排，數字和順序才不會打架。 */
+  function shownMin(a, now) {
+    if (!a) return null;
+    const m = Math.round((a.ms - now) / 60e3);
+    return a.upper ? Math.max(1, m) : a.ms - now < 60e3 ? 0 : m;
+  }
   function bigOf(a, now) {
-    if (!a) return { num: "—", unit: "", soon: false };
-    const s = (a.ms - now) / 1000;
-    if (a.upper) return { num: "≤" + Math.max(1, Math.round(s / 60)), unit: "分", soon: false };
-    if (s < 60) return { num: "到站", unit: "", soon: true };
-    const m = Math.round(s / 60), about = C.isApprox(a.source);
+    const m = shownMin(a, now);
+    if (m == null) return { num: "—", unit: "", soon: false };
+    if (a.upper) return { num: "≤" + m, unit: "分", soon: false };
+    if (m === 0) return { num: "到站", unit: "", soon: true };
+    const about = C.isApprox(a.source);
     return m <= 90 ? { num: String(m), unit: "分", soon: m <= 3, about } : { num: fmt(a.ms), unit: "", soon: false, about };
   }
   /** 沒有車時說明原因（官方的代碼：尚未發車、末班已過…）。 */
@@ -587,7 +593,7 @@ function startApp() {
     return `<div class="rt-more">${body}<div class="rt-acts">${last ? `<span class="rt-last">起站末班 ${last}</span>` : ""}` +
       `<button type="button" class="btn" data-unwatch="${esc(r.it.unit)}">不再關注</button></div></div>`;
   }
-  /** 一條關注的路線一列：下一班幾分（大字）、往哪裡、再來兩班。點了展開看每一台車。 */
+  /** 一條關注的路線一列：下一班幾分（大字）、往哪裡、再來兩班。點了展開看每一台車。「全部」時往哪裡那一行改放在最下面、前面寫在哪裡等（r.at）。 */
   function routeRowHTML(r, now, hot) {
     const a = r.arr[0], big = bigOf(a, now), early = a ? earliestText(a, now) : "";
     const later = r.arr.slice(1).filter((x) => !x.upper && x.ms - now <= 90 * 60e3).slice(0, 2).map((x) => Math.max(1, Math.round((x.ms - now) / 60e3)));
@@ -595,12 +601,12 @@ function startApp() {
     const src = !a ? "" : a.source === "官方・未發車" || a.source === "班表" ? "未發車" : a.source === "班距" ? "依班距" : "";
     const sub = !a ? idleText(r.it) : [early, src].filter(Boolean).join("・");
     return `<article class="rt${hot ? " hot" : ""}"><button type="button" class="rt-main" data-row="${esc(r.it.unit)}" aria-expanded="${open}">` +
-      `<span class="rt-id">${badgeHTML(r.label, r.col)}<span class="rt-to">往 ${esc(r.toward)}</span></span>` +
+      `<span class="rt-id">${badgeHTML(r.label, r.col)}${r.at ? "" : `<span class="rt-to">往 ${esc(r.toward)}</span>`}</span>` +
       `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}"${a ? ` title="${esc(srcTitle(a.source))}"` : ""}>${big.about ? "<small>約</small>" : ""}${big.num}${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${esc(sub)}</span></span>` +
-      `<span class="rt-later"><small>再來</small><b>${later.length ? later.join("、") + " 分" : "—"}</b></span></button>` +
+      `<span class="rt-later"><small>再來</small><b>${later.length ? later.join("、") + " 分" : "—"}</b></span>` +
+      (r.at ? `<span class="rt-where">${esc(r.at.label)}・往 ${esc(r.toward)}</span>` : "") + `</button>` +
       (open ? rowDetailHTML(r, now) : "") + `</article>`;
   }
-  const firstMs = (r) => (r.arr[0] && !r.arr[0].upper ? r.arr[0].ms : Infinity);
   const CHEV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
   /**
    * 候車位置那一排：左邊是位置（文字、分頁、或選單，規則見 core.positionBar），最右邊一顆「選路線」。
@@ -667,6 +673,7 @@ function startApp() {
     render();
   }
   let lastPlaceShown = null;
+  let lastOrder = { id: "", units: [] };                // 等車頁上一次畫出來的上下順序（哪個地點、哪個候車位置的）
   const placeChipsHTML = (pl) => allPlaces().map((p) =>
     `<button type="button" data-place="${esc(p.id)}" aria-pressed="${!!pl && p.id === pl.id}"${p.temp ? ' class="temp"' : ""}>${esc(p.name)}</button>`).join("");
   /** 橫向捲動的那一列：右邊還有東西時加上淡出，提示可以往右滑。 */
@@ -700,10 +707,15 @@ function startApp() {
     $("#posRow").hidden = !pv.cur;
     setHTML("#posRow", pv.cur ? posRowHTML(pv) : "");
     setHTML("#leave", pv.cur ? leaveHTML(pv, now) : "");
-    const soonest = Math.min(...pv.rows.map(firstMs));           // 最快到的那一列外框加深（列的順序不變）
-    // 「全部」：每換一個候車位置，前面寫一行在哪裡等
-    const headOf = (r, i) => (r.at && (i === 0 || pv.rows[i - 1].at !== r.at) ? `<h3 class="pos-h">${esc(r.at.long)}</h3>` : "");
-    setHTML("#board", pv.rows.map((r, i) => headOf(r, i) + routeRowHTML(r, now, Number.isFinite(soonest) && firstMs(r) === soonest)).join("") +
+    // 越快到的越上面（規則在 core.arrivalOrder）。「全部」也是整個一起排，不分候車位置，每一列自己寫在哪裡等
+    const byUnit = new Map(pv.rows.map((r) => [r.it.unit, r])), listId = pv.cur ? pl.id + "|" + pv.cur.id : "";
+    const mins = Object.fromEntries(pv.rows.map((r) => [r.it.unit, shownMin(r.arr[0], now)]));
+    const order = C.arrivalOrder([...byUnit.keys()], mins, lastOrder.id === listId ? lastOrder.units : null, !!state.openRow);
+    lastOrder = { id: listId, units: order };
+    // 最快到的那一列外框加深：確定有車的（依班距的那一筆不算）裡面分鐘數最小的；一樣的話是排在上面的那一列
+    const sure = order.filter((u) => mins[u] != null && !byUnit.get(u).arr[0].upper);
+    const hot = sure.find((u) => mins[u] === Math.min(...sure.map((x) => mins[x])));
+    setHTML("#board", order.map((u) => routeRowHTML(byUnit.get(u), now, u === hot)).join("") +
       (!pv.cur ? `<p class="empty">${esc(state.cityNote || "找不到這個站名的站牌")}</p>` : ""));
     renderPick(pv, pl, now);
   }
