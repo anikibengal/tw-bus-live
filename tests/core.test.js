@@ -990,13 +990,13 @@ test("候車位置：同一條路線去程停這根、返程停那根，方位�
 });
 
 test("候車位置：地址寫的月台不同就不併，順序照月台編號", () => {
-  // 板橋公車站：四個月台出站都往西北、彼此相隔十幾公尺；新府路那一根（沒有月台）在第三月台旁邊
+  // 板橋公車站：四個月台出站都往西北、彼此相隔十幾公尺；另外兩根同站名、地址沒寫月台的站牌，一根同方位又近、一根在對面
   const ps = [pole("2673", 320, 0, { bay: "第三月台", addr: "縣民大道公車專用月台第三月台" }), pole("70620", null, 30, { bay: "第四月台" }),
               pole("70716", 326, 10, { bay: "第一月台" }), pole("70717", 337, 20, { bay: "第二月台" }),
-              pole("70667", 306, 5, { addr: "板橋火車站西側門" }), pole("70666", 127, 40, { addr: "板橋火車站西側門對面" })];
+              pole("80001", 306, 5, { addr: "月台出口" }), pole("80000", 127, 40, { addr: "月台出口對面" })];
   const pos = C.positions(ps);
-  assert.deepEqual(pos.map((x) => [x.label, x.ids]), [["第一月台", ["70716"]], ["第二月台", ["70717"]], ["第三月台", ["2673", "70667"]], ["第四月台", ["70620"]], ["往東南", ["70666"]]]);
-  assert.deepEqual(pos.map((x) => x.long), ["第一月台", "第二月台", "第三月台", "第四月台", "往東南・板橋火車站西側門對面"]);
+  assert.deepEqual(pos.map((x) => [x.label, x.ids]), [["第一月台", ["70716"]], ["第二月台", ["70717"]], ["第三月台", ["2673", "80001"]], ["第四月台", ["70620"]], ["往東南", ["80000"]]]);
+  assert.deepEqual(pos.map((x) => x.long), ["第一月台", "第二月台", "第三月台", "第四月台", "往東南・月台出口對面"]);
   assert.equal(pos[2].heading, 313, "一組的方位是各根的平均");
   assert.equal(pos[3].heading, null, "方位不明的月台照樣照編號排，不排到最後");
   // 沒有月台的站牌可以併進某個月台（同方位、夠近），那一組就叫那個月台
@@ -1007,6 +1007,40 @@ test("候車位置：地址寫的月台不同就不併，順序照月台編號",
   assert.deepEqual(groupsOf([pole("1", 90, 0, { bay: "第一月台" }), pole("2", 90, 10, { bay: "第一月台" })]), [["1", "2"]]);
   // 月台編號照數字排：第 10 月台在第 2 月台後面
   assert.deepEqual(labelsOf([pole("1", 0, 0, { bay: "第10月台" }), pole("2", 0, 10, { bay: "第2月台" }), pole("3", 0, 20, { bay: "第1月台" })]), ["第1月台", "第2月台", "第10月台"]);
+});
+
+test("候車位置：站名不同的站牌不併，標籤帶上站名多出來的那一段", () => {
+  // 板橋公車站（座標照實際的換算）：新府路那兩根是另一個站名的牌子，70667 離第三月台 67 公尺、方位只差 14 度
+  const N = "新北板橋公車站", S = "新北板橋公車站(新府路)";
+  const ps = [pole("2673", 320, 0, { name: N, bay: "第三月台" }), pole("70716", 326, 0, { name: N, bay: "第一月台" }),
+              pole("70667", 306, 67, { name: S, addr: "板橋火車站西側門" }), pole("70666", 127, 52, { name: S, addr: "板橋火車站西側門對面" })];
+  const want = [["第一月台", ["70716"]], ["第三月台", ["2673"]], ["新府路 往東南", ["70666"]], ["新府路 往西北", ["70667"]]];
+  assert.deepEqual(C.positions(ps).map((x) => [x.label, x.ids]), want);
+  assert.deepEqual(C.positions([...ps].reverse()).map((x) => [x.label, x.ids]), want, "和傳入順序無關：沒有多出一段的站名排前面");
+  assert.deepEqual(C.positions(ps).map((x) => x.long), ["第一月台", "第三月台", "新府路・往東南・板橋火車站西側門對面", "新府路・往西北・板橋火車站西側門"]);
+  // 差別只在站名：同一批站牌都叫同一個站名（或都沒給站名），70667 就併進第三月台
+  assert.deepEqual(groupsOf(ps.map((q) => ({ ...q, name: N }))), [["70716"], ["2673", "70667"], ["70666"]]);
+  assert.deepEqual(groupsOf(ps.map(({ name, ...q }) => q)), [["70716"], ["2673", "70667"], ["70666"]]);
+  // 一邊有站名、一邊沒給：當成不同
+  assert.deepEqual(groupsOf([pole("1", 90, 0, { name: "甲站" }), pole("2", 90, 10)]), [["1"], ["2"]]);
+  // 那個站名只有一個位置：標籤就是多出來的那一段；完整寫法照樣帶方位與地址
+  const one = C.positions([pole("1", 90, 0, { name: "甲站" }), pole("2", 90, 10, { name: "甲站(乙路)", addr: "乙路5號" }), pole("3", 95, 20, { name: "甲站(乙路)" })]);
+  assert.deepEqual(one.map((x) => [x.label, x.long, x.ids]), [["往東", "往東", ["1"]], ["乙路", "乙路・往東・乙路5號", ["2", "3"]]]);
+  // 「這個方位只有一組」是在同一個站名裡數：兩個站名各有一組往東，互不影響
+  assert.deepEqual(labelsOf([pole("1", 90, 0, { name: "甲站", addr: "甲路1號" }), pole("2", 90, 300, { name: "甲站(乙路)" }), pole("3", 270, 300, { name: "甲站(乙路)" })]),
+    ["往東", "乙路 往東", "乙路 往西"]);
+  // 多出來的那一段：全形括號也認得；兩個站名都有括號；有月台的寫月台
+  assert.deepEqual(labelsOf([pole("1", 90, 0, { name: "甲站" }), pole("2", 90, 10, { name: "甲站（乙路）" })]), ["往東", "乙路"]);
+  assert.deepEqual(labelsOf([pole("1", 90, 0, { name: "甲站(乙路)" }), pole("2", 90, 10, { name: "甲站(丁街)" })]), ["丁街", "乙路"]);
+  const bays = C.positions([pole("1", 0, 0, { name: "甲站" }), pole("2", 0, 10, { name: "甲站(乙路)", bay: "第二月台" }), pole("3", 0, 20, { name: "甲站(乙路)", bay: "第一月台" })]);
+  assert.deepEqual(bays.map((x) => [x.label, x.long]), [["往北", "往北"], ["乙路 第一月台", "乙路・第一月台"], ["乙路 第二月台", "乙路・第二月台"]]);
+  // 括號前面不一樣：整個站名當標籤
+  assert.deepEqual(labelsOf([pole("1", 90, 0, { name: "甲站" }), pole("2", 90, 10, { name: "丙站(乙路)" })]), ["丙站(乙路)", "甲站"]);
+  // 同一個站名、同方位、沒有地址的兩個位置：只剩那一段可以寫，加編號
+  assert.deepEqual(labelsOf([pole("1", 90, 0, { name: "甲站" }), pole("2", 0, 0, { name: "甲站(乙路)" }), pole("3", 0, 300, { name: "甲站(乙路)" })]), ["往東", "乙路 1", "乙路 2"]);
+  // 只有一個站名：括號不拆（一般的站都走這裡）
+  assert.deepEqual(labelsOf([pole("1", 90, 0, { name: "甲站(乙路)" }), pole("2", 270, 10, { name: "甲站(乙路)" })]), ["往東", "往西"]);
+  assert.deepEqual(Object.keys(C.positions(ps)[2]).sort(), ["addr", "bay", "heading", "id", "ids", "label", "long"], "回傳的欄位不變");
 });
 
 test("候車位置的標籤：方位在這個地點只有一組才寫方位，不然寫短地址；撞名的加編號", () => {
@@ -1031,30 +1065,45 @@ test("候車位置的標籤：方位在這個地點只有一組才寫方位，�
   assert.deepEqual(Object.keys(C.positions([pole("1", 90)])[0]).sort(), ["addr", "bay", "heading", "id", "ids", "label", "long"]);
 });
 
-test("候車位置那一排的排法：文字、全部分頁、有關注的做分頁＋其他、整個用選單", () => {
+test("候車位置那一排的排法：文字、每個位置一顆分頁、第一個有關注的做分頁＋其他、整個用選單；有關注的位置不只一個就多一顆「全部」", () => {
   const mk = (...labels) => labels.map((label, i) => ({ id: String(i + 1), label }));
-  const shape = (pos, watched) => { const b = C.positionBar(pos, watched); return [b.mode, b.tabs.map((p) => p.id), b.rest.map((p) => p.id)]; };
+  const shape = (pos, watched, allSel) => { const b = C.positionBar(pos, watched, allSel); return [b.mode + (b.all ? "+全部" : ""), b.tabs.map((p) => p.id), b.rest.map((p) => p.id)]; };
   assert.deepEqual(shape(mk("往東"), []), ["plain", [], []]);
   assert.deepEqual(shape([], []), ["plain", [], []]);
   assert.deepEqual(shape(mk("往東", "往西"), []), ["tabs", ["1", "2"], []]);
   assert.deepEqual(shape(mk("往東", "往西"), ["2"]), ["tabs", ["1", "2"], []], "分頁順序不隨關注變");
   assert.deepEqual(shape(mk("往北", "往南", "往西南"), []), ["tabs", ["1", "2", "3"], []]);
-  // 四個以上：沒有關注時整個用選單；有關注的（最多兩個）做成分頁，其餘收進「其他」
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), ["3"]), ["tabs", ["1", "2", "3"], []]);
+  // 有關注路線的位置不只一個：多一顆「全部」。兩個位置還排得下；三個就改成「全部＋第一個有關注的＋其他」
+  assert.deepEqual(shape(mk("往東", "往西"), ["1", "2"]), ["tabs+全部", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往東", "往西"), ["2", "1"]), ["tabs+全部", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), ["3", "2"]), ["more+全部", ["2"], ["1", "3"]], "全部＋三個位置＋選路線排不下");
+  assert.equal(C.positionBar(mk("往東", "往西"), ["2"]).all, false, "只有一個位置有關注：不出「全部」");
+  assert.equal(C.positionBar(mk("往東", "往西"), ["2", "9"]).all, false, "不存在的位置不算");
+  // 四個以上：沒有關注時整個用選單；第一個有關注的做成分頁，其餘收進「其他」
   assert.deepEqual(shape(mk("第一月台", "第二月台", "第三月台", "第四月台"), []), ["drop", [], ["1", "2", "3", "4"]], "四個分頁加上「選路線」排不下");
   const bays = mk("第一月台", "第二月台", "第三月台", "第四月台", "往東南");
   assert.deepEqual(shape(bays, []), ["drop", [], ["1", "2", "3", "4", "5"]]);
   assert.deepEqual(shape(bays, ["3"]), ["more", ["3"], ["1", "2", "4", "5"]]);
-  assert.deepEqual(shape(bays, ["3", "1"]), ["more", ["1", "3"], ["2", "4", "5"]], "照位置的固定順序，不是照關注的先後");
-  assert.deepEqual(shape(bays, ["5", "3", "1"]), ["more", ["1", "3"], ["2", "4", "5"]], "第三個有關注的位置收進其他");
+  assert.deepEqual(shape(bays, ["3", "1"]), ["more+全部", ["1"], ["2", "3", "4", "5"]], "照位置的固定順序，不是照關注的先後；第二個有關注的收進其他");
+  assert.deepEqual(shape(bays, ["5", "3", "1"]), ["more+全部", ["1"], ["2", "3", "4", "5"]]);
   assert.deepEqual(shape(bays, ["9"]), ["drop", [], ["1", "2", "3", "4", "5"]], "不存在的位置不算有關注");
-  // 標籤是地址（超過 5 個字）：分頁放不下
+  // 標籤是地址（超過 5 個字）：分頁放不下。看的是「會做成分頁的那一個」（第一個有關注的）短不短
   assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), []), ["drop", [], ["1", "2"]]);
   assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["1"]), ["more", ["1"], ["2"]], "有關注的那個標籤短：它做分頁");
   assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["2"]), ["drop", [], ["1", "2"]], "有關注的那個標籤是地址：整個用選單");
-  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["1", "2"]), ["drop", [], ["1", "2"]]);
+  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["1", "2"]), ["more+全部", ["1"], ["2"]]);
+  assert.deepEqual(shape(mk("中正東路35號對向", "往西北"), ["1", "2"]), ["drop+全部", [], ["1", "2"]], "第一個有關注的是地址：整個用選單，「全部」放在選單裡");
   // 5 個字算短（第12月台），6 個字算長
   assert.deepEqual(shape(mk("第12月台", "往東"), [])[0], "tabs");
   assert.deepEqual(shape(mk("第123月台", "往東"), [])[0], "drop");
+  // 使用者在這個站選過「全部」：之後關注剩一個位置、甚至都取消了，「全部」還在（不然選路線面板開著時清單會整個換掉）
+  assert.deepEqual(shape(mk("往東", "往西"), ["1"], true), ["tabs+全部", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往東", "往西"), [], true), ["tabs+全部", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), ["2"], true), ["more+全部", ["2"], ["1", "3"]]);
+  assert.deepEqual(shape(bays, [], true), ["drop+全部", [], ["1", "2", "3", "4", "5"]]);
+  assert.deepEqual(shape(mk("往東"), ["1"], true), ["plain", [], []], "只有一個位置：沒有「全部」可言");
+  assert.deepEqual(shape([], [], true), ["plain", [], []]);
 });
 
 test("關注的單位鍵對得上全市索引；路線名拆成號碼與後綴；路線名照數字排", () => {
@@ -1216,6 +1265,218 @@ test("替新路線挑顏色：同一個站不重複，其次挑用得最少的�
   for (let i = 0; i < 10; i++) used.push(C.pickColor(P10, used, used));
   assert.equal(new Set(used).size, 10);
   assert.equal(C.pickColor(P10, used, used), "色0");
+});
+
+// 路線的顏色要記住：以下的路線鍵「n:1」「n:2」…各是一條路線，「|0」「|1」是方向
+const P4 = ["甲", "乙", "丙", "丁"];
+const R = (n, name = String(n), dirs = [0]) => dirs.map((g) => ({ unit: `n:${n}|${g}`, display: name }));
+// 別的站已經載入的六條路線，乙、丙、丁各用兩次：所以「全部路線裡用得最少的」是甲。用來確認避開甲靠的是同一個站的規則，不是剛好用得少
+const ELSEWHERE = { "x:1|0": { x1: "乙" }, "x:2|0": { x2: "丙" }, "x:3|0": { x3: "丁" }, "x:4|0": { x4: "乙" }, "x:5|0": { x5: "丙" }, "x:6|0": { x6: "丁" } };
+
+test("路線的顏色：上次用過的沿用；沒記過、或記的顏色已經不能用，才挑新的", () => {
+  const W = { 站: ["n:1|0", "n:2|0"] };
+  // 沒記過：和 pickColor 一樣，同一個站已經上色的要避開
+  assert.deepEqual(C.routeColors(P4, R(1), W, {}, {}), { 1: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(2), W, { "n:1|0": { 1: "甲" }, ...ELSEWHERE }, {}), { 2: "乙" });
+  // 記過：沿用，就算不是 pickColor 會挑的那一個
+  assert.deepEqual(C.routeColors(P4, R(1), W, {}, { "n:1|0": { 1: "丙" } }), { 1: "丙" });
+  assert.deepEqual(C.routeColors(P4, R(2), W, { "n:1|0": { 1: "甲" } }, { "n:2|0": { 2: "丁" } }), { 2: "丁" });
+  // 記的顏色已經不在候選裡（之後換過色票）：重挑
+  assert.deepEqual(C.routeColors(P4, R(1), W, {}, { "n:1|0": { 1: "紅" } }), { 1: "甲" });
+  // 記的顏色被同一個站已經上色的路線用了：重挑，而且避開它（就算它關注得比較晚：這次打開它的顏色已經定了）
+  assert.deepEqual(C.routeColors(P4, R(1), W, { "n:2|0": { 2: "甲" }, ...ELSEWHERE }, { "n:1|0": { 1: "甲" } }), { 1: "乙" });
+  // 用同一個顏色的路線在別的站：不相干，沿用
+  assert.deepEqual(C.routeColors(P4, R(1), { 站: ["n:1|0"], 別站: ["n:2|0"] }, { "n:2|0": { 2: "甲" } }, { "n:1|0": { 1: "甲" } }), { 1: "甲" });
+  // 已經載入的路線看它現在的顏色，不看它以前記的（它這次重挑過）
+  assert.deepEqual(C.routeColors(P4, R(1), W, { "n:2|0": { 2: "乙" } }, { "n:1|0": { 1: "甲" }, "n:2|0": { 2: "甲" } }), { 1: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(1), W, { "n:2|0": { 2: "甲" }, ...ELSEWHERE }, { "n:2|0": { 2: "乙" } }), { 1: "乙" }, "避開的是現在的甲");
+  // 沒有人關注的路線（除錯時直接載入）：沒有同一個站可言，記過就沿用
+  assert.deepEqual(C.routeColors(P4, R(9), W, { "n:1|0": { 1: "甲" } }, { "n:9|0": { 9: "甲" } }), { 9: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(9), W, { "n:1|0": { 1: "甲" } }, {}), { 9: "乙" }, "沒記過：挑全部路線裡用得最少的");
+  // 資料更新後顯示名稱改了：舊名字記的顏色不算數，也不佔位子
+  assert.deepEqual(C.routeColors(P4, R(1, "新名"), W, {}, { "n:1|0": { 舊名: "甲" } }), { 新名: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(1), { 站: ["n:1|0", "n:1|1"] }, {}, { "n:1|1": { "1返": "甲" } }), { 1: "甲" }, "已經沒有的方向也一樣");
+  assert.deepEqual(C.routeColors(P4, R(9), {}, {}, {}), { 9: "甲" }, "關注清單還沒讀進來");
+});
+
+test("路線的顏色：還沒載入的路線，記住的顏色先佔著；兩條記同一個顏色時關注得早的留著", () => {
+  const W = { 站: ["n:1|0", "n:2|0", "n:3|0"] };
+  const both = { "n:1|0": { 1: "甲" }, "n:2|0": { 2: "甲" } };
+  // 1 和 2 都記著甲，都還沒載入：不管誰先載入，1（關注得早）留著，2 換
+  assert.deepEqual(C.routeColors(P4, R(1), W, {}, both), { 1: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(2), W, {}, both), { 2: "乙" }, "2 先載入：1 還沒來，甲也要讓給它");
+  assert.deepEqual(C.routeColors(P4, R(2), W, { "n:1|0": { 1: "甲" } }, both), { 2: "乙" }, "1 先載入");
+  // 先後看的是整份關注清單裡第一次出現的位置（一條路線一個位置），不是在這個站的清單裡誰排前面
+  const W2 = { 前: ["n:2|0"], 後: ["n:1|0", "n:2|0"] };
+  assert.deepEqual(C.routeColors(P4, R(2), W2, {}, both), { 2: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(1), W2, {}, both), { 1: "乙" });
+  // 另一個方向也算同一條路線的位置
+  const W3 = { 前: ["n:2|1"], 後: ["n:1|0", "n:2|0"] };
+  assert.deepEqual(C.routeColors(P4, R(1), W3, {}, both), { 1: "乙" });
+  // 沒記過顏色的新路線：同一個站還沒載入的路線記的顏色都避開，不管它排前面還是後面
+  assert.deepEqual(C.routeColors(P4, R(2), W, ELSEWHERE, { "n:1|0": { 1: "甲" } }), { 2: "乙" }, "排前面的 1 記著甲");
+  assert.deepEqual(C.routeColors(P4, R(2), W, ELSEWHERE, { "n:3|0": { 3: "甲" } }), { 2: "乙" }, "排後面的 3 記著甲");
+  assert.deepEqual(C.routeColors(P4, R(2), W, {}, { "n:1|0": { 1: "乙" }, "n:3|0": { 3: "甲" } }), { 2: "丙" });
+  // 還沒載入的路線在別的站：不用避開，但「全部路線裡用得最少的」要把它記的算進去（不然挑到哪一個又會看載入先後）
+  const far = { 站: ["n:2|0"], 別站: ["n:1|0"] };
+  assert.deepEqual(C.routeColors(P4, R(2), far, {}, { "n:1|0": { 1: "甲" } }), { 2: "乙" });
+  assert.deepEqual(C.routeColors(P4, R(2), far, {}, { "n:1|0": { 1: "甲" }, "n:2|0": { 2: "甲" } }), { 2: "甲" }, "記著同一個顏色也沒關係");
+  // 已經取消關注的路線記的顏色：不佔位子、也不算用過
+  assert.deepEqual(C.routeColors(P4, R(2), W, {}, { "n:8|0": { 8: "甲" } }), { 2: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(2), W, {}, { "n:8|0": { 8: "甲" }, "n:2|0": { 2: "甲" } }), { 2: "甲" });
+  // 別的路線剛好同名（顏色是照顯示名稱給的，當成同一個）：不算被別人用了
+  assert.deepEqual(C.routeColors(P4, R(2, "同名"), W, {}, { "n:1|0": { 同名: "甲" }, "n:2|0": { 同名: "甲" } }), { 同名: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(2, "同名"), W, { "n:1|0": { 同名: "甲" } }, { "n:2|0": { 同名: "甲" } }), { 同名: "甲" });
+  assert.deepEqual(C.routeColors(P4, R(2, "同名"), W, ELSEWHERE, { "n:3|0": { 同名: "甲" } }), { 同名: "甲" }, "排後面的同名路線記著甲：不用避開");
+});
+
+test("路線的顏色：一個顯示名稱兩個方向都有時，兩個方向所在的站都算；一條路線有幾個顯示名稱時各一個顏色", () => {
+  // 897 的檔案先列往板橋（|0），但在板橋公車站搭的是往景文科大（|1）：只看第一個變體的方向會以為這個站沒有別的路線
+  const r897 = R(897, "897", [0, 1]), W = { 板橋公車站: ["n:577|0", "n:897|1"] };
+  assert.deepEqual(C.routeColors(P4, r897, W, { "n:577|0": { 577: "甲" }, ...ELSEWHERE }, {}), { 897: "乙" });
+  assert.deepEqual(C.routeColors(P4, r897, W, { "n:577|0": { 577: "甲" } }, { "n:897|0": { 897: "甲" }, "n:897|1": { 897: "甲" } }), { 897: "乙" });
+  // 兩個方向在不同的站：兩個站的路線都要避開
+  const W2 = { 去程站: ["n:897|0", "n:1|0"], 返程站: ["n:897|1", "n:2|0"] };
+  assert.deepEqual(C.routeColors(P4, r897, W2, { "n:1|0": { 1: "甲" }, "n:2|0": { 2: "乙" } }, {}), { 897: "丙" });
+  // 記的顏色只記在其中一個方向（資料更新後另一個方向才多了這個顯示名稱）：一樣沿用
+  assert.deepEqual(C.routeColors(P4, r897, W, {}, { "n:897|1": { 897: "丁" } }), { 897: "丁" });
+  // 一條路線兩個顯示名稱、同一個方向：各一個顏色，排前面的先挑
+  const two = [...R(5, "5"), ...R(5, "5區")], W5 = { 站: ["n:5|0"] };
+  assert.deepEqual(C.routeColors(P4, two, W5, ELSEWHERE, {}), { 5: "甲", "5區": "乙" });
+  assert.deepEqual(C.routeColors(P4, two, W5, {}, { "n:5|0": { 5: "丙", "5區": "乙" } }), { 5: "丙", "5區": "乙" });
+  // 兩個記了同一個顏色：排前面的留著、後面的換；前面的沒記過要挑新的時，後面記著的顏色留給它
+  assert.deepEqual(C.routeColors(P4, two, W5, ELSEWHERE, { "n:5|0": { 5: "甲", "5區": "甲" } }), { 5: "甲", "5區": "乙" });
+  assert.deepEqual(C.routeColors(P4, two, W5, ELSEWHERE, { "n:5|0": { "5區": "甲" } }), { 5: "乙", "5區": "甲" });
+  // 同一條路線的另一個顯示名稱也算「用過」：沒有同站限制時挑全部路線裡用得最少的
+  const split = [...R(5, "5"), ...R(5, "5返", [1])];
+  assert.deepEqual(C.routeColors(P4, split, W5, {}, {}), { 5: "甲", "5返": "乙" });
+  assert.deepEqual(C.routeColors(P4, split, W5, {}, { "n:5|1": { "5返": "甲" } }), { 5: "乙", "5返": "甲" }, "還沒輪到的照它記的算");
+});
+
+test("路線的顏色：同一個站把顏色用完了，記著的重複顏色照樣沿用（不然第 11 個以後每次打開都重挑）", () => {
+  const W = { 站: ["n:1|0", "n:2|0", "n:3|0", "n:4|0", "n:5|0"] };
+  const four = { "n:1|0": { 1: "甲" }, "n:2|0": { 2: "乙" }, "n:3|0": { 3: "丙" }, "n:4|0": { 4: "丁" } };
+  assert.deepEqual(C.routeColors(P4, R(5), W, four, { "n:5|0": { 5: "丙" } }), { 5: "丙" }, "四個顏色都有人用：沿用記著的丙");
+  assert.deepEqual(C.routeColors(P4, R(5), W, {}, { ...four, "n:5|0": { 5: "丙" } }), { 5: "丙" }, "別的路線還沒載入也一樣");
+  assert.deepEqual(C.routeColors(P4, R(5), W, four, {}), { 5: "甲" }, "沒記過：挑這個站用得最少的");
+  // 用完了沒有，排在後面、還沒載入的路線記的顏色也要算：5 排第二，前面的 1 和它一樣記著丁，後面三條記著甲、乙、丙
+  assert.deepEqual(C.routeColors(P4, R(5), { 站: ["n:1|0", "n:5|0", "n:2|0", "n:3|0", "n:4|0"] }, {},
+    { "n:1|0": { 1: "丁" }, "n:5|0": { 5: "丁" }, "n:2|0": { 2: "甲" }, "n:3|0": { 3: "乙" }, "n:4|0": { 4: "丙" } }), { 5: "丁" });
+  // 還有顏色沒人用（取消關注了一條）：重複的那一條換成沒人用的
+  const three = { "n:1|0": { 1: "甲" }, "n:2|0": { 2: "乙" }, "n:3|0": { 3: "丙" } };
+  assert.deepEqual(C.routeColors(P4, R(5), { 站: ["n:1|0", "n:2|0", "n:3|0", "n:5|0"] }, three, { "n:5|0": { 5: "丙" } }), { 5: "丁" });
+});
+
+test("記住路線的顏色：這條路線原本記的整個換掉，別的路線不動；不改原本那一份、內容沒變時順序也不變", () => {
+  const r = R(897, "897", [0, 1]);
+  assert.deepEqual(C.rememberColors({}, r, { 897: "甲" }), { "n:897|0": { 897: "甲" }, "n:897|1": { 897: "甲" } }, "兩個方向都記");
+  const memo = { "n:1|0": { 1: "乙" }, "n:897|1": { 897: "丙", 舊名: "丁" }, "n:897|2": { 897: "丙" }, "n:8970|0": { 8970: "丁" } };
+  const before = JSON.stringify(memo);
+  assert.deepEqual(C.rememberColors(memo, r, { 897: "甲", 別的: "乙" }),
+    { "n:1|0": { 1: "乙" }, "n:897|1": { 897: "甲" }, "n:8970|0": { 8970: "丁" }, "n:897|0": { 897: "甲" } }, "改名的顯示名稱、已經沒有的方向都不留；號碼只是開頭一樣的路線不動");
+  assert.equal(JSON.stringify(memo), before, "不改原本那一份");
+  assert.deepEqual(C.rememberColors(memo, r, {}), { "n:1|0": { 1: "乙" }, "n:8970|0": { 8970: "丁" } }, "這次沒有顏色的不記");
+  // 一條路線兩個顯示名稱
+  assert.deepEqual(C.rememberColors({}, [...R(5, "5"), ...R(5, "5區"), ...R(5, "5返", [1])], { 5: "甲", "5區": "乙", "5返": "甲" }),
+    { "n:5|0": { 5: "甲", "5區": "乙" }, "n:5|1": { "5返": "甲" } });
+  // 內容沒變：轉成文字和原本一模一樣（頁面靠這個判斷要不要存）
+  const same = { "n:9|0": { 9: "丁" }, "n:897|1": { 897: "甲" }, "n:897|0": { 897: "甲" }, "n:1|0": { 1: "乙" } };
+  assert.equal(JSON.stringify(C.rememberColors(same, r, { 897: "甲" })), JSON.stringify(same));
+  assert.notEqual(JSON.stringify(C.rememberColors(same, r, { 897: "乙" })), JSON.stringify(same));
+});
+
+/** 模擬打開一次頁面：路線照 order 的先後一條一條載入（app.js 的 paint 做的事），回傳每個顯示名稱的顏色與記住的顏色。 */
+function openPage(palette, files, watch, memo, order, fixed = {}) {
+  const used = { ...fixed };
+  for (const k of order) {
+    const got = C.routeColors(palette, files[k], watch, used, memo);
+    for (const x of files[k]) (used[x.unit] = used[x.unit] || {})[x.display] = got[x.display];
+    memo = C.rememberColors(memo, files[k], got);
+  }
+  return { colors: Object.assign({}, ...Object.values(used)), memo };
+}
+const perms = (a) => (a.length <= 1 ? [a] : a.flatMap((x, i) => perms([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
+/** 每一種載入順序都打開一次，結果要一模一樣；回傳那個結果。 */
+function everyOrder(palette, files, watch, memo, keys, fixed) {
+  const want = openPage(palette, files, watch, memo, keys, fixed);
+  for (const order of perms(keys)) assert.deepEqual(openPage(palette, files, watch, memo, order, fixed), want, "載入順序 " + order.join("→"));
+  return want;
+}
+const P10 = Array.from({ length: 10 }, (_, i) => "色" + i);
+
+test("路線的顏色不看載入的先後：重新整理、隔天再開都一樣（使用者 2026-10-05：897 和 577 重新整理後顏色對調）", () => {
+  // 板橋公車站：內建的 307 之外關注 897（搭的是 |1）與 577
+  const files = { 897: R(897, "897", [0, 1]), 577: R(577, "577", [0, 1]) };
+  const W = { 板橋公車站: ["tpe:16111|0", "n:897|1", "n:577|0"], 國泰街口: ["tpe:16111|0"] };
+  const builtin = { "tpe:16111|0": { 307: "#FFD253" }, "tpe:16111|1": { 307: "#FFD253" } };
+  // 第一次（還沒記過）：誰先載入誰先挑；之後不管怎麼載入都是第一次的顏色，記的內容也不再變
+  for (const first of perms(["897", "577"])) {
+    const a = openPage(P10, files, W, {}, first, builtin);
+    assert.equal(new Set([a.colors[897], a.colors[577]]).size, 2);
+    assert.deepEqual(everyOrder(P10, files, W, a.memo, ["897", "577"], builtin), a);
+  }
+  // 五條路線、兩個站，其中一條兩個站都有關注：每一種第一次的順序，之後 120 種載入順序都不變
+  const five = { 1: R(1), 2: R(2), 3: R(3, "3", [0, 1]), 4: [...R(4, "4"), ...R(4, "4區")], 5: R(5) };
+  const W5 = { 甲站: ["n:1|0", "n:2|0", "n:3|0"], 乙站: ["n:3|1", "n:4|0", "n:5|0", "n:1|0"] };
+  for (const first of [["1", "2", "3", "4", "5"], ["5", "4", "3", "2", "1"], ["3", "5", "1", "4", "2"]]) {
+    const a = openPage(P4.concat("戊", "己"), five, W5, {}, first);
+    assert.equal(new Set(["1", "2", "3"].map((n) => a.colors[n])).size, 3, "甲站不重複");
+    assert.equal(new Set(["3", "4", "4區", "5", "1"].map((n) => a.colors[n])).size, 5, "乙站不重複");
+    assert.deepEqual(everyOrder(P4.concat("戊", "己"), five, W5, a.memo, Object.keys(five)), a);
+  }
+});
+
+test("路線的顏色：記過的不會被還沒記過的搶走；取消關注再加回來是原本的顏色", () => {
+  const files = { 1: R(1), 2: R(2), 3: R(3), 4: R(4) };
+  // 1、2 記過（故意不是照順序挑會得到的顏色），3 是新關注的：不管誰先載入，1、2 不變，3 拿剩下的
+  const memo = { "n:1|0": { 1: "乙" }, "n:2|0": { 2: "甲" } };
+  const a = everyOrder(P4, files, { 站: ["n:1|0", "n:2|0", "n:3|0"] }, memo, ["1", "2", "3"]);
+  assert.deepEqual(a.colors, { 1: "乙", 2: "甲", 3: "丙" });
+  // 取消關注 2：1、3 不變，2 記的還留著
+  const b = everyOrder(P4, files, { 站: ["n:1|0", "n:3|0"] }, a.memo, ["1", "3"]);
+  assert.deepEqual(b.colors, { 1: "乙", 3: "丙" });
+  assert.deepEqual(b.memo["n:2|0"], { 2: "甲" });
+  // 加回來（排到最後）：還是甲
+  assert.deepEqual(everyOrder(P4, files, { 站: ["n:1|0", "n:3|0", "n:2|0"] }, b.memo, ["1", "2", "3"]).colors, { 1: "乙", 2: "甲", 3: "丙" });
+  // 取消的那段時間關注了 4，4 用了甲（沒人佔著）：2 加回來時甲已經有人用，換一個；1、3、4 不變
+  const c = everyOrder(P4, files, { 站: ["n:1|0", "n:3|0", "n:4|0"] }, b.memo, ["1", "3", "4"]);
+  assert.deepEqual(c.colors, { 1: "乙", 3: "丙", 4: "甲" });
+  const d = everyOrder(P4, files, { 站: ["n:1|0", "n:3|0", "n:4|0", "n:2|0"] }, c.memo, ["1", "2", "3", "4"]);
+  assert.deepEqual(d.colors, { 1: "乙", 3: "丙", 4: "甲", 2: "丁" });
+  assert.deepEqual(everyOrder(P4, files, { 站: ["n:1|0", "n:3|0", "n:4|0", "n:2|0"] }, d.memo, ["1", "2", "3", "4"]), d, "換過之後就固定");
+});
+
+test("路線的顏色：同一條路線兩個站都關注是同一個顏色；加到第二個站才撞色時，關注得早的留著、晚的換一次", () => {
+  const files = { 1: R(1), 2: R(2), 3: R(3), 4: R(4), 5: R(5) };
+  // 甲站 1、2，丙站 3、4，乙站只有 5：四個顏色各用一次，5 沒有同站的限制，挑到和 1 一樣的甲
+  const W = { 甲站: ["n:1|0", "n:2|0"], 丙站: ["n:3|0", "n:4|0"], 乙站: ["n:5|0"] };
+  const a = openPage(P4, files, W, {}, ["1", "2", "3", "4", "5"]);
+  assert.deepEqual(a.colors, { 1: "甲", 2: "乙", 3: "丙", 4: "丁", 5: "甲" });
+  // 把 1 也加到乙站：1 和 5 在同一個站撞色。下次打開，1（關注得早）留著甲，5 換；其他不動，而且和載入順序無關
+  const W2 = { ...W, 乙站: ["n:5|0", "n:1|0"] };
+  const b = everyOrder(P4, files, W2, a.memo, Object.keys(files));
+  assert.deepEqual(b.colors, { 1: "甲", 2: "乙", 3: "丙", 4: "丁", 5: "乙" });
+  assert.deepEqual(everyOrder(P4, files, W2, b.memo, Object.keys(files)), b, "換過一次之後就固定");
+  // 乙站排在關注清單最前面時，5 算關注得早：5 留著，1 換（甲站的 2 用了乙，所以挑丙）
+  const W3 = { 乙站: ["n:5|0", "n:1|0"], 甲站: ["n:1|0", "n:2|0"], 丙站: ["n:3|0", "n:4|0"] };
+  assert.deepEqual(everyOrder(P4, files, W3, a.memo, Object.keys(files)).colors, { 1: "丙", 2: "乙", 3: "丙", 4: "丁", 5: "甲" });
+});
+
+test("路線的顏色：同一個站十條各一個顏色，第十一條才重複；重新整理後每一條都不變", () => {
+  const files = Object.fromEntries(Array.from({ length: 11 }, (_, i) => [String(i + 1), R(i + 1)]));
+  const keys = Object.keys(files), ten = keys.slice(0, 10), W = (ks) => ({ 站: ["tpe:16111|0", ...ks.map((k) => `n:${k}|0`)] });
+  const builtin = { "tpe:16111|0": { 307: "#FFD253", "307西藏三民": "#FF8461" }, "tpe:10482|0": { "265區": "#47B4EB" } };
+  // 換幾種載入順序（10! 種跑不完）：倒過來、每次從不同的地方開始輪、固定的亂數
+  const orders = (ks) => { let s = 7; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    return [[...ks].reverse(), ...ks.map((_, i) => [...ks.slice(i), ...ks.slice(0, i)]), ...Array.from({ length: 30 }, () => [...ks].sort(() => rnd() - 0.5))]; };
+  const a = openPage(P10, files, W(ten), {}, [...ten].reverse(), builtin);
+  assert.equal(new Set(ten.map((k) => a.colors[k])).size, 10, "十條不重複");
+  for (const o of orders(ten)) assert.deepEqual(openPage(P10, files, W(ten), a.memo, o, builtin), a, o.join("→"));
+  // 第十一條：一定和某一條重複；之後怎麼載入，十一條都是原本的顏色
+  const b = openPage(P10, files, W(keys), a.memo, keys, builtin);
+  assert.deepEqual(ten.map((k) => b.colors[k]), ten.map((k) => a.colors[k]));
+  assert.ok(P10.includes(b.colors[11]));
+  for (const o of orders(keys)) assert.deepEqual(openPage(P10, files, W(keys), b.memo, o, builtin), b, o.join("→"));
 });
 
 // ---------------------------------------------------------------- 幫忙量路況的路線

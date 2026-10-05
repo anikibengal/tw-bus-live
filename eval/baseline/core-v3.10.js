@@ -340,67 +340,6 @@
     return pool.reduce((best, c) => (cost(c) < cost(best) ? c : best), pool[0]);
   }
   /**
-   * 一條路線載入時，替它的每個顯示名稱決定顏色：上次用過的就沿用（重新整理、隔天再開都不變），不能沿用才用 pickColor 挑新的。
-   * 路線載入的先後每次不一定一樣（使用者 2026-10-05：897 和 577 重新整理後顏色對調），所以結果不能看誰先載入。
-   * 做法是還沒載入的路線，拿它記住的顏色當作已經佔著：
-   *   沿用＝記住的顏色還在 palette 裡，而且同一個站沒有「排在它前面」的路線用同一個顏色。排在前面＝已經上色的（這次打開就定了，不再改），
-   *         或還沒載入但關注得比它早的。所以兩條記住同一個顏色時，關注得早的留著、晚的換，和誰先載入無關。
-   *         同一個站把顏色都用完了（怎麼挑都會重複）也沿用，不然第 11 個以後每次打開都重挑一次。
-   *   挑新的＝同一個站別的路線現在的顏色、還沒載入的路線記住的顏色都避開（那些路線等一下會沿用），沒記過顏色的新路線才不會把別人的顏色搶走。
-   * 「同一個站」＝出現在同一個地點的關注清單裡。一個顯示名稱兩個方向都有時，兩個方向各自所在的站都算。
-   * route＝這條路線的變體 [{ unit, display }…]，檔案裡的順序（同一條路線有幾個顯示名稱時，排前面的先決定）；
-   * watch＝{ 地點: [單位…] }，順序就是關注的先後；used＝已經載入的單位現在的顏色 { 單位: { 顯示名稱: 顏色 } }；
-   * memo＝記住的顏色，形狀和 used 相同（rememberColors 寫的）。回傳 { 顯示名稱: 顏色 }。
-   */
-  function routeColors(palette, route, watch, used, memo) {
-    const lists = Object.values(watch), routeOf = (u) => u.split("|")[0];
-    const order = [...new Set(lists.flat().map(routeOf))];                // 路線，照關注的先後
-    const rank = (u) => order.indexOf(routeOf(u));
-    const own = new Set(route.map((x) => routeOf(x.unit))), isOwn = (u) => own.has(routeOf(u));
-    const me = Math.min(...route.map((x) => rank(x.unit))), kept = (u) => memo[u] || {};
-    // 別的路線的顏色（一個顯示名稱一筆）：有人關注的先照記住的，已經載入的再蓋過去、照現在的
-    const others = new Map();
-    for (const u of lists.flat()) if (!isOwn(u)) for (const [n, c] of Object.entries(kept(u))) others.set(n, c);
-    for (const m of Object.values(used)) for (const [n, c] of Object.entries(m)) others.set(n, c);
-    const out = {};
-    for (const d of new Set(route.map((x) => x.display))) {
-      const at = route.filter((x) => x.display === d).map((x) => x.unit);
-      const mine = at.map((u) => kept(u)[d]).find((c) => c);
-      const ahead = new Map(), behind = new Map();                        // 同一個站別的顯示名稱 → 顏色：排在它前面的、後面的
-      for (const list of lists) {
-        if (!list.some((u) => at.includes(u))) continue;
-        for (const o of list) {
-          if (isOwn(o)) {                                                 // 這條路線自己的其他顯示名稱：決定好的排前面，還沒輪到的照記住的排後面
-            for (const x of route) if (x.unit === o) {
-              if (out[x.display]) ahead.set(x.display, out[x.display]);
-              else if (kept(o)[x.display]) behind.set(x.display, kept(o)[x.display]);
-            }
-          } else if (used[o]) for (const [n, c] of Object.entries(used[o])) ahead.set(n, c);
-          else for (const [n, c] of Object.entries(kept(o))) (rank(o) < me ? ahead : behind).set(n, c);
-        }
-      }
-      const all = new Map(others);
-      for (const x of route) if (out[x.display] || kept(x.unit)[x.display]) all.set(x.display, out[x.display] || kept(x.unit)[x.display]);
-      for (const m of [ahead, behind]) m.delete(d);                       // 別的路線剛好同名：顏色是照顯示名稱給的，當成同一個，不算被別人用了
-      const block = [...ahead.values()], nearby = [...block, ...behind.values()];
-      const full = palette.every((c) => nearby.includes(c));
-      out[d] = palette.includes(mine) && (full || !block.includes(mine)) ? mine : pickColor(palette, nearby, [...all.values()]);
-    }
-    return out;
-  }
-  /**
-   * 把一條路線這次用的顏色記起來，下次 routeColors 沿用。這條路線原本記的整個換掉：資料更新後改名或拿掉的顯示名稱不留著，免得一直佔著顏色。
-   * 取消關注的路線不清掉：加回來還是原本的顏色。回傳新的一份，不改原本的；內容沒變時連鍵的順序都不變（呼叫的地方靠這個判斷要不要存）。
-   * memo＝{ 單位: { 顯示名稱: 顏色 } }；route＝[{ unit, display }…]；colors＝routeColors 的結果。
-   */
-  function rememberColors(memo, route, colors) {
-    const routeOf = (u) => u.split("|")[0], own = new Set(route.map((x) => routeOf(x.unit))), now = {}, out = {};
-    for (const x of route) if (colors[x.display]) (now[x.unit] = now[x.unit] || {})[x.display] = colors[x.display];
-    for (const [u, m] of Object.entries(memo)) { if (!own.has(routeOf(u))) out[u] = m; else if (now[u]) out[u] = now[u]; }
-    for (const [u, m] of Object.entries(now)) out[u] = m;
-    return out;
-  }
-  /**
    * 挑「幫忙量路況」的路線：別條路線的車跑過同一段路，一樣說明那一段現在好不好走，剛打開頁面、自己路線的車還沒跑過時特別有用
    * （10/3 記錄：打開後 15 分鐘內，夜間誤差少約一成、白天少 2%；開久了沒有差別）。
    * 要載入別條路線的站序才用得上，所以只挑最划算的幾條：把關注的路線拆成「相鄰兩站」，每次挑能讓最多「還不到 need 條別的路線經過」的站間段
@@ -1020,7 +959,7 @@
 
   return { P, tpeParts, serviceDay, hhmmToMin, fmtTime, parseTpe, prepLine, project, parseBlobJson, indexEta, mergeEta, officialNext,
            distM, nearestPlatforms, nearestStops, searchRoutes, searchStops,
-           compass8, headingDiff, bayNo, positions, positionBar, unitKey, carryOver, splitRouteName, pickColor, routeColors, rememberColors, helperRoutes, routeCompare,
+           compass8, headingDiff, bayNo, positions, positionBar, unitKey, carryOver, splitRouteName, pickColor, helperRoutes, routeCompare,
            tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, paceUpdate, paceNow, paceState, travelMin, roadAhead, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
            calibGroup, isApprox, earliestMs, upcomingForBus, rideEstimate, tweenKm, planTween };
 });

@@ -64,16 +64,26 @@ function startApp() {
   // ---------------------------------------------------------------- 資料整理（路線可以在執行中加進來）
   const V = [], byKey = new Map();
   const colorOf = {}, color = {};
+  let colorMemo = ls.get("bus:color", {});              // 單位 → { 顯示名稱: 顏色 }：每條路線上次用的顏色，重新整理、隔天再開都沿用
+  if (!colorMemo || typeof colorMemo !== "object" || Array.isArray(colorMemo)) colorMemo = {};
   let watchReady = false;             // 關注清單讀進來了沒（內建路線在那之前就要上色）
-  /** 一條路線（一個顯示名稱）的顏色：內建的固定；其他的挑同一個站別的路線還沒用過的（見 core.pickColor）。 */
-  function routeColor(v) {
-    if (PALETTE[v.display]) return PALETTE[v.display];
-    const u = C.unitKey(v), near = new Map();
-    if (watchReady) for (const us of Object.values(watch)) {
-      if (!us.includes(u)) continue;
-      for (const o of us) for (const w of unitsOf.get(o) || []) if (w.display !== v.display && colorOf[w.display]) near.set(w.display, colorOf[w.display]);
+  /**
+   * 替剛載入的變體上色（一個顯示名稱一個顏色）：內建的固定；其他的沿用上次的顏色，不能沿用才挑同一個站別的路線沒用過的，然後記起來。
+   * 規則在 core.routeColors：結果不看路線載入的先後（原本看，重新整理後 897 和 577 的顏色會對調）。
+   * 取消關注不會清掉記的顏色，加回來還是原本那個（除非這段時間同一個站有別的路線用了它）。
+   */
+  function paint(vs) {
+    for (const v of vs) if (PALETTE[v.display]) colorOf[v.display] = PALETTE[v.display];
+    const rows = vs.filter((v) => !PALETTE[v.display]).map((v) => ({ unit: C.unitKey(v), display: v.display }));
+    const todo = rows.filter((x) => !colorOf[x.display]);
+    if (todo.length) {
+      const used = {};                // 已經載入的單位 → 各顯示名稱現在的顏色
+      for (const [u, ws] of unitsOf) { used[u] = {}; for (const w of ws) used[u][w.display] = colorOf[w.display]; }
+      Object.assign(colorOf, C.routeColors(EXTRA, todo, watchReady ? watch : {}, used, colorMemo));
     }
-    return C.pickColor(EXTRA, [...near.values()], Object.values(colorOf));
+    const memo = C.rememberColors(colorMemo, rows, colorOf);
+    if (JSON.stringify(memo) !== JSON.stringify(colorMemo)) ls.set("bus:color", memo);      // 沒變就不寫（每次打開都會經過這裡）
+    colorMemo = memo;
   }
   const tracker = C.createTracker([]);
   let map = null;                     // 地圖分頁第一次打開才建
@@ -101,9 +111,9 @@ function startApp() {
   /** 把變體加進來：內建路線在啟動時、其他路線在使用者關注它時。 */
   function addVariants(list) {
     const vs = list.filter((v) => !byKey.has(v.key)), fams = new Set();
+    paint(vs);
     for (const v of vs) {
       V.push(v); byKey.set(v.key, v);
-      if (!colorOf[v.display]) colorOf[v.display] = routeColor(v);
       color[v.key] = colorOf[v.display];
       const u = C.unitKey(v);
       if (!unitsOf.has(u)) unitsOf.set(u, []);
@@ -219,8 +229,9 @@ function startApp() {
   }
   watchReady = true;
   const saveWatch = () => { ls.set("bus:watch", watch); watchRev++; };
-  let posSel = ls.get("bus:pos", {});                   // 地點 → 上次看的候車位置（那個位置第一根站牌的編號）
+  let posSel = ls.get("bus:pos", {});                   // 地點 → 上次看的候車位置（那個位置第一根站牌的編號；ALL＝「全部」）
   if (!posSel || typeof posSel !== "object" || Array.isArray(posSel)) posSel = {};
+  const ALL = "*";                                      // 「全部」：這個站關注的路線不分候車位置列在一起
   function setPos(placeId, posId) {
     if (posSel[placeId] === posId) return;
     posSel[placeId] = posId;
@@ -286,7 +297,7 @@ function startApp() {
     const ck = pl.id + (CITY ? "+" : "-" + watchRev);
     if (posCache.has(ck)) return posCache.get(ck);
     const poles = placePoles(pl), poleOf = new Map(poles.map((p) => [p.id, p]));
-    const pos = C.positions(poles.map((p) => ({ id: p.id, heading: p.heading, lat: p.lat, lon: p.lon, bay: p.bay, addr: p.addr, units: p.items.map((it) => it.unit) })));
+    const pos = C.positions(poles.map((p) => ({ id: p.id, heading: p.heading, lat: p.lat, lon: p.lon, bay: p.bay, addr: p.addr, name: p.name, units: p.items.map((it) => it.unit) })));
     for (const x of pos) {
       const seen = new Set();
       x.poles = x.ids.map((id) => poleOf.get(id));
@@ -298,6 +309,7 @@ function startApp() {
   /**
    * 一個地點的畫面資料：全部的候車位置、那一排怎麼排、現在看的是哪一個、它關注的路線各一列。
    * 現在看哪一個：記住的那一個 → 第一個有關注路線的 → 離你最近的（有定位時）→ 第一個。
+   * 記住的是「全部」時，cur 是湊出來的一個位置（all: true）：列是每個有關注路線的位置的列接起來（照位置的固定順序），每一列帶著它自己的位置（at）。
    */
   function placeView(pl) {
     const poles = placePoles(pl), wk = watch[pl.id] || [];
@@ -310,11 +322,19 @@ function startApp() {
     });
     const withRows = pos.filter((x) => x.watched.length);
     const dist = (x) => Math.min(...x.poles.map((p) => distM(state.me, p)));
-    const cur = pos.find((x) => x.id === posSel[pl.id]) || withRows[0] ||
-      (state.me ? [...pos].sort((a, b) => dist(a) - dist(b))[0] : pos[0]) || null;
-    const bar = C.positionBar(pos, withRows.map((x) => x.id));
-    // 地圖底下的清單：現在看的位置排最前面，其餘有關注路線的位置接在後面
-    const secs = cur ? [cur, ...withRows.filter((x) => x !== cur)].filter((x) => x.watched.length) : [];
+    const bar = C.positionBar(pos, withRows.map((x) => x.id), posSel[pl.id] === ALL);
+    let cur;
+    if (bar.all && posSel[pl.id] === ALL) {
+      const once = (key) => { const seen = new Set(); return (x) => !seen.has(key(x)) && seen.add(key(x)); };      // 同一條路線停兩個位置：算前面那一個
+      const rows = withRows.flatMap((x) => x.rows.map((r) => ({ ...r, at: x }))).filter(once((r) => r.it.unit));
+      cur = { id: ALL, all: true, label: "全部", long: "全部", addr: "", poles: withRows.flatMap((x) => x.poles),
+              items: pos.flatMap((x) => x.items).filter(once((it) => it.unit)), watched: rows.map((r) => r.it), rows };
+    } else {
+      cur = pos.find((x) => x.id === posSel[pl.id]) || withRows[0] ||
+        (state.me ? [...pos].sort((a, b) => dist(a) - dist(b))[0] : pos[0]) || null;
+    }
+    // 地圖底下的清單：現在看的位置排最前面，其餘有關注路線的位置接在後面（「全部」：每個位置一段，照固定順序）
+    const secs = !cur ? [] : cur.all ? withRows : [cur, ...withRows.filter((x) => x !== cur)].filter((x) => x.watched.length);
     return { poles, pos, bar, cur, rows: cur ? cur.rows : [], secs, watched: pos.flatMap((x) => x.watched) };
   }
   /** 目前地點關注中的單位（地圖只畫這幾條）。 */
@@ -534,19 +554,25 @@ function startApp() {
     if (!best || best.coverage < 0.4 || best.kmh == null || best.kmh >= 10) return "";
     return `・<span class="road ${best.kmh < 5 ? "jam" : "slow"}" title="公車在站牌前 2 km 實際跑的速度，含靠站與紅燈">前方${best.kmh < 5 ? "停滯" : "低速"} ${Math.round(best.kmh)} km/h</span>`;
   }
-  /** 出門提醒：走到站牌要幾分，對上「最早可能到站」，告訴你現在該不該走。算的是現在看的那個候車位置。這一塊永遠在，下面的列才不會上下跳。 */
+  /**
+   * 出門提醒：走到站牌要幾分，對上「最早可能到站」，告訴你現在該不該走。算的是現在看的那個候車位置；
+   * 「全部」時每一班車用它自己那個位置的走路時間，小字寫的是要搭的那一班在哪裡等。這一塊永遠在，下面的列才不會上下跳。
+   */
   function leaveHTML(pv, now) {
     if (!pv.rows.length) return `<div class="leave none">還沒選路線</div>`;
     if (!state.me) return `<button type="button" class="leave ask" data-locate>${LOC_SVG}<span>${esc(state.geoErr || (state.geoNote === "定位中…" ? "定位中…" : "定位，看幾分後出門"))}</span></button>`;
-    const dm = Math.min(...pv.cur.poles.map((p) => distM(state.me, p)));
+    const at = (r) => r.at || pv.cur, dOf = (x) => Math.min(...x.poles.map((p) => distM(state.me, p)));
+    const near = [...new Set(pv.rows.map(at))].reduce((a, b) => (dOf(b) < dOf(a) ? b : a));
+    const dm = dOf(near);
     if (dm > FAR_M) return `<div class="leave none">你離這個站約 ${(dm / 1000).toFixed(1)} km<small><button type="button" class="link" data-go-find>看附近的站牌</button></small></div>`;
     // 小字：哪個位置（分頁上的短標籤才寫；選單上已經是完整地址，再寫一次會把後面的分鐘數擠掉）＋走過去幾分＋前方路況
-    const where = pv.bar.mode === "tabs" || pv.bar.mode === "more" ? esc(pv.cur.label) + "・" : "";
-    const w = (dm * WALK_DETOUR) / WALK_M_PER_MIN, walk = `${where}走到站牌約 ${Math.max(1, Math.round(w))} 分` + roadText(pv.rows, now);
-    const arr = pv.rows.flatMap((r) => r.arr).filter((a) => !a.upper).sort((x, y) => x.ms - y.ms);
-    const hit = arr.find((a) => ((earliestOf(a, now) || a.ms) - now) / 60e3 >= w);
-    if (!hit) return `<div class="leave none">目前沒有趕得上的車<small>${walk}</small></div>`;
-    const slack = ((earliestOf(hit, now) || hit.ms) - now) / 60e3 - w;
+    const walkMin = (x) => (dOf(x) * WALK_DETOUR) / WALK_M_PER_MIN, least = (a) => ((earliestOf(a, now) || a.ms) - now) / 60e3;
+    const arr = pv.rows.flatMap((r) => r.arr.filter((a) => !a.upper).map((a) => ({ a, x: at(r) }))).sort((p, q) => p.a.ms - q.a.ms);
+    const found = arr.find(({ a, x }) => least(a) >= walkMin(x)), spot = found ? found.x : near, w = walkMin(spot);
+    const where = pv.cur.all || pv.bar.mode === "tabs" || pv.bar.mode === "more" ? esc(spot.label) + "・" : "";
+    const walk = `${where}走到站牌約 ${Math.max(1, Math.round(w))} 分` + roadText(pv.rows, now);
+    if (!found) return `<div class="leave none">目前沒有趕得上的車<small>${walk}</small></div>`;
+    const hit = found.a, slack = least(hit) - w;
     const which = `${esc(hit.label)}（${etaText(hit, now).text}）`;
     return slack <= 1.5 ? `<div class="leave go">現在出門・搭 ${which}<small>${walk}</small></div>`
                         : `<div class="leave">${Math.floor(slack)} 分鐘後出門・搭 ${which}<small>${walk}</small></div>`;
@@ -579,20 +605,23 @@ function startApp() {
   /**
    * 候車位置那一排：左邊是位置（文字、分頁、或選單，規則見 core.positionBar），最右邊一顆「選路線」。
    * 位置的順序固定，不隨關注變動；「其他」與選單打開的是同一份清單，有關注路線的位置前面有一個點。
+   * 有關注路線的位置不只一個時最前面多一顆「全部」（分頁時是第一顆，整個用選單時是選單的第一項）。
    */
   function posRowHTML(pv) {
     const { bar, cur } = pv, inRest = bar.rest.includes(cur);
+    const allTab = bar.all ? `<button type="button" data-pos="${ALL}" aria-pressed="${!!cur.all}" aria-label="這個站關注的路線全部列出來">全部</button>` : "";
+    const allItem = bar.all && bar.mode === "drop" ? `<button type="button" role="menuitemradio" aria-checked="${!!cur.all}" data-pos="${ALL}"><i class="on"></i><span>全部</span><small>${pv.watched.length} 條</small></button>` : "";
     let left;
     if (bar.mode === "plain") left = `<div class="posplain">${esc(cur.long)}</div>`;
     else if (bar.mode === "drop") left = `<button type="button" class="posdrop" data-pos-menu aria-expanded="${state.posMenu}" aria-label="換候車位置"><span>${esc(cur.long)}</span>${CHEV_SVG}</button>`;
-    else left = `<div class="seg dirs postabs" role="group" aria-label="候車位置">` +
+    else left = `<div class="seg dirs postabs" role="group" aria-label="候車位置">` + allTab +
       bar.tabs.map((x) => `<button type="button" data-pos="${esc(x.id)}" aria-pressed="${x === cur}" aria-label="候車位置 ${esc(x.long)}">${esc(x.label)}</button>`).join("") +
       (bar.mode === "more" ? `<button type="button" data-pos-menu aria-pressed="${inRest}" aria-expanded="${state.posMenu}" aria-label="其他候車位置">${esc(inRest ? cur.label : "其他")}<i class="caret"></i></button>` : "") + `</div>`;
-    const menu = state.posMenu && bar.rest.length ? `<div class="posmenu" role="menu">` + bar.rest.map((x) =>
+    const menu = state.posMenu && bar.rest.length ? `<div class="posmenu" role="menu">` + allItem + bar.rest.map((x) =>
       `<button type="button" role="menuitemradio" aria-checked="${x === cur}" data-pos="${esc(x.id)}"><i${x.watched.length ? ' class="on"' : ""}></i><span>${esc(x.long)}</span><small>${x.items.length} 條</small></button>`).join("") + `</div>` : "";
     return left + `<button type="button" class="pickbtn" data-pick-open><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7M18 4v4M15 16v4"/></svg>選路線</button>` + menu;
   }
-  /** 「選路線」面板：只列現在這個候車位置停的路線，順序固定（照路線號碼），每列一顆關注開關；沒關注的只列官方的下一班。 */
+  /** 「選路線」面板：只列現在這個候車位置停的路線（「全部」時是這個站每個位置的），順序固定（照路線號碼），每列一顆關注開關；沒關注的只列官方的下一班。 */
   function renderPick(pv, pl, now) {
     const box = $("#picker"), cur = pv.cur;
     box.hidden = !(state.pick && cur);
@@ -672,7 +701,9 @@ function startApp() {
     setHTML("#posRow", pv.cur ? posRowHTML(pv) : "");
     setHTML("#leave", pv.cur ? leaveHTML(pv, now) : "");
     const soonest = Math.min(...pv.rows.map(firstMs));           // 最快到的那一列外框加深（列的順序不變）
-    setHTML("#board", pv.rows.map((r) => routeRowHTML(r, now, Number.isFinite(soonest) && firstMs(r) === soonest)).join("") +
+    // 「全部」：每換一個候車位置，前面寫一行在哪裡等
+    const headOf = (r, i) => (r.at && (i === 0 || pv.rows[i - 1].at !== r.at) ? `<h3 class="pos-h">${esc(r.at.long)}</h3>` : "");
+    setHTML("#board", pv.rows.map((r, i) => headOf(r, i) + routeRowHTML(r, now, Number.isFinite(soonest) && firstMs(r) === soonest)).join("") +
       (!pv.cur ? `<p class="empty">${esc(state.cityNote || "找不到這個站名的站牌")}</p>` : ""));
     renderPick(pv, pl, now);
   }
@@ -719,7 +750,7 @@ function startApp() {
     state.routePage = null; state.q = ""; $("#q").value = "";
     if (unit) {                                           // 從路線頁選來的：直接看它停的那個候車位置
       const at = placePositions({ id, names: cfg ? namesOf(cfg) : [name] }).find((x) => x.items.some((it) => it.unit === unit));
-      if (at) setPos(id, at.id);
+      if (at && posSel[id] !== ALL) setPos(id, at.id);      // 這個站看的是「全部」就留在「全部」（新關注的那一條會出現在它的位置底下）
     }
     setTab("wait");
     setPlace(id);
