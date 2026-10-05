@@ -162,6 +162,10 @@ function startApp() {
 
   // ---------------------------------------------------------------- 全市索引（站牌上的路線、行車方位、搜尋、附近的站）
   let CITY = null;
+  let SIB = new Map();               // 站名 → 合成同一個地點的那一組（站名只差括號、夠近；core.stopGroups）。全市索引載入後才有
+  const sibNames = (n) => (SIB.has(n) ? SIB.get(n).names : [n]);
+  const sibLabel = (n) => (SIB.has(n) ? SIB.get(n).label : n);
+  const sibKey = (n) => (SIB.has(n) ? SIB.get(n).key : n);
   const cityPlat = new Map();        // 站牌編號 → 索引列 [編號, 站名, 緯度, 經度, [[路線序號, 方向, 站牌編號]...], 行車方位, 短地址, 月台（有才有）]
   const routeByKey = new Map();      // 路線鍵 → 索引列 [鍵, 名稱, 來源, 主路線編號, 起點, 終點]
   const polesCache = new Map(), posCache = new Map();
@@ -173,6 +177,8 @@ function startApp() {
       for (const p of d.plats) cityPlat.set(String(p[0]), p);
       for (const r of d.routes) routeByKey.set(r[0], r);
       CITY = d;
+      SIB = C.stopGroups(d.plats);
+      mergeSiblingStops();
     } catch (e) { state.cityNote = "全市路線與站牌資料讀不到（" + e.message + "），只能看已經載入的路線"; }
     polesCache.clear(); posCache.clear();
     render();
@@ -237,12 +243,37 @@ function startApp() {
     posSel[placeId] = posId;
     ls.set("bus:pos", posSel);
   }
-  const namesOf = (p) => (p.match && p.match.length ? p.match : [p.name]);
+  /** 設定檔裡一個常用地點包含的站名：自己列的，加上和它們合成同一個地點的（站名只差括號）。 */
+  const namesOf = (p) => [...new Set((p.match && p.match.length ? p.match : [p.name]).flatMap(sibNames))];
+  /** 畫面上的地點。存起來的站與臨時站：key＝存的那個站名（地點的編號用它），name＝畫面上寫的，names＝合成同一個地點的全部站名。 */
   function allPlaces() {
     const ps = A.places.map((p) => ({ id: "cfg:" + p.name, name: p.name, names: namesOf(p), fixed: true }));
-    for (const n of saved) if (!ps.some((p) => p.names.includes(n))) ps.push({ id: "stop:" + n, name: n, names: [n] });
-    if (state.temp && !ps.some((p) => p.names.includes(state.temp))) ps.push({ id: "stop:" + state.temp, name: state.temp, names: [state.temp], temp: true });
+    const add = (n, temp) => { if (!ps.some((p) => p.names.includes(n))) ps.push({ id: "stop:" + n, key: n, name: sibLabel(n), names: sibNames(n), ...(temp ? { temp: true } : {}) }); };
+    for (const n of saved) add(n);
+    if (state.temp) add(state.temp, true);
     return ps;
+  }
+  /**
+   * 全市索引載入後做一次：存起來的站（或臨時站）裡，有的現在和前面的地點算同一個（站名只差括號，或已經在常用站裡）——
+   * 把它關注的路線併進前面那個地點，站只留一個。不併的話後面那個會從畫面上消失，它關注的路線也跟著不見。
+   */
+  function mergeSiblingStops() {
+    const owners = A.places.map((p) => ({ id: "cfg:" + p.name, names: namesOf(p) })), keep = [];
+    let changed = false;
+    const fold = (n) => {
+      const to = owners.find((o) => o.names.includes(n)), from = "stop:" + n;
+      if (!to) return false;
+      if (watch[from]) watch[to.id] = [...new Set([...(watch[to.id] || []), ...watch[from]])];
+      delete watch[from]; delete posSel[from];
+      if (state.place === from) state.place = to.id;
+      if (ls.get("bus:placeId", null) === from) ls.set("bus:placeId", to.id);
+      return (changed = true);
+    };
+    for (const n of saved) if (!fold(n)) { keep.push(n); owners.push({ id: "stop:" + n, names: sibNames(n) }); }
+    if (state.temp && fold(state.temp)) { state.temp = null; ls.set("bus:temp", null); }
+    if (!changed) return;
+    saved = keep; ls.set("bus:saved", saved); ls.set("bus:pos", posSel);
+    saveWatch();
   }
   function currentPlace() {
     const ps = allPlaces();
@@ -657,7 +688,7 @@ function startApp() {
         `<button type="button" class="wbtn" data-watch="${esc(it.unit)}" aria-pressed="${on}" aria-label="${on ? "取消關注" : "關注"} ${esc(info.label)} 往${esc(info.toward)}">${on ? "已關注" : "關注"}</button></div>`;
     }).join("") || `<p class="empty">${elsewhere.length ? "這個位置沒有，在：" : "沒有符合的路線"}</p>` + elsewhere.map((x) =>
       `<button type="button" class="pick" data-pos="${esc(x.id)}"><span><b>${esc(x.long)}</b></span><em>${x.items.filter(hit).length} 條 ›</em></button>`).join(""));
-    setHTML("#pickFoot", !pl.fixed && !pl.temp ? `<button type="button" class="link" data-unsave="${esc(pl.name)}">把「${esc(pl.name)}」從常用站移除</button>` : "");
+    setHTML("#pickFoot", !pl.fixed && !pl.temp ? `<button type="button" class="link" data-unsave="${esc(pl.key)}">把「${esc(pl.name)}」從常用站移除</button>` : "");
   }
   function openPick() {
     const pl = currentPlace(), pv = pl && placeView(pl);
@@ -740,17 +771,23 @@ function startApp() {
     compute(); render();
     if (state.tab === "map") focusPlace();
   }
-  /** 打開一個站名：是常用站就切過去，不是就當成臨時站。unit＝從路線頁選來的（路線、方向），順便關注。 */
+  /**
+   * 打開一個站名：是常用站（或存起來的站）就切過去，不是就當成臨時站。unit＝從路線頁選來的（路線、方向），順便關注。
+   * 站名只差括號、合成同一個地點的（板橋夜市(南雅南路)、板橋夜市(縣民大道)）：打開哪一個都是同一個地點；
+   * 已經存起來的用當初存的那個站名當編號，新開的用那一組的代表站名（sibKey）。
+   */
   function openStop(name, unit) {
     const cfg = A.places.find((p) => namesOf(p).includes(name));
-    const id = cfg ? "cfg:" + cfg.name : "stop:" + name, keep = !!cfg || saved.includes(name);
+    const had = cfg ? null : saved.find((n) => sibNames(n).includes(name)) || (state.temp && sibNames(state.temp).includes(name) ? state.temp : null);
+    const key = had || sibKey(name), names = cfg ? namesOf(cfg) : sibNames(key);
+    const id = cfg ? "cfg:" + cfg.name : "stop:" + key, keep = !!cfg || saved.includes(key);
     if (!keep) {
-      if (state.temp && state.temp !== name && !saved.includes(state.temp)) delete watch["stop:" + state.temp];      // 臨時站一次只留一個
-      state.temp = name; ls.set("bus:temp", name);
+      if (state.temp && state.temp !== key && !saved.includes(state.temp)) delete watch["stop:" + state.temp];      // 臨時站一次只留一個
+      state.temp = key; ls.set("bus:temp", key);
     }
     if (watch[id] === undefined) {
       // 第一次打開這個站：把別的站已經關注、這裡也有停的路線先帶進來（使用者 10/4：不要每到一個站都重新選一次）
-      const here = placePoles({ id, names: [name] }).flatMap((p) => p.items.map((it) => it.unit));
+      const here = placePoles({ id, names }).flatMap((p) => p.items.map((it) => it.unit));
       watch[id] = C.carryOver(watch, here, unit || null);
       for (const u of watch[id]) ensureRoute(u.split("|")[0]);
     } else if (unit) {
@@ -761,7 +798,7 @@ function startApp() {
     saveWatch();
     state.routePage = null; state.q = ""; $("#q").value = "";
     if (unit) {                                           // 從路線頁選來的：直接看它停的那個候車位置
-      const at = placePositions({ id, names: cfg ? namesOf(cfg) : [name] }).find((x) => x.items.some((it) => it.unit === unit));
+      const at = placePositions({ id, names }).find((x) => x.items.some((it) => it.unit === unit));
       if (at && posSel[id] !== ALL) setPos(id, at.id);      // 這個站看的是「全部」就留在「全部」（新關注的那一條會出現在它的位置底下）
     }
     setTab("wait");
@@ -822,27 +859,27 @@ function startApp() {
     const q = state.q.trim(), box = $("#findBody");
     $("#qClear").hidden = !q;
     if (!CITY) { box.innerHTML = `<p class="empty">${esc(state.cityNote || "路線與站牌資料載入中…")}</p>`; return; }
-    const stopRow = (name, sub, right) => `<button type="button" class="pick" data-stop="${esc(name)}"><span><b>${esc(name)}</b><small>${esc(sub)}</small></span><em>${esc(right)}</em></button>`;
+    const stopRow = (x, right) => `<button type="button" class="pick" data-stop="${esc(x.name)}"><span><b>${esc(x.label)}</b><small>${esc(routesAt(x.plats))}</small></span><em>${esc(right)}</em></button>`;
     const routesAt = (plats) => {
       const names = [...new Set(plats.flatMap((p) => p[4].map((e) => CITY.routes[e[0]][1])))].sort(C.routeCompare);
       return `${names.slice(0, 4).join("、")}${names.length > 4 ? ` 等 ${names.length} 條` : ""}`;
     };
     if (!q) {
-      const near = state.me ? C.nearestStops(CITY.plats, state.me, NEARBY_M, NEARBY_N) : null;
+      const near = state.me ? C.nearestStops(CITY.plats, state.me, NEARBY_M, NEARBY_N, SIB) : null;
       box.innerHTML =
         (recent.length ? `<h2>最近找過</h2><div class="chips">${recent.map((r) => (r.k === "r"
-          ? `<button type="button" data-route="${esc(r.key)}">${esc(r.name)}</button>` : `<button type="button" data-stop="${esc(r.name)}">${esc(r.name)}</button>`)).join("")}</div>` : "") +
+          ? `<button type="button" data-route="${esc(r.key)}">${esc(r.name)}</button>` : `<button type="button" data-stop="${esc(r.name)}">${esc(sibLabel(r.name))}</button>`)).join("")}</div>` : "") +
         `<h2>附近的站牌${state.me ? `<button type="button" class="link" data-locate>重新定位</button>` : ""}</h2>` +
         (!near ? `<button type="button" class="leave ask" data-locate>${LOC_SVG}<span>${esc(state.geoErr || (state.geoNote === "定位中…" ? "定位中…" : "用定位找附近的站牌"))}</span></button>`
-          : near.length ? `<div class="card">${near.map((x) => stopRow(x.name, routesAt(x.plats), `${Math.round(x.d)} m`)).join("")}</div>`
+          : near.length ? `<div class="card">${near.map((x) => stopRow(x, `${Math.round(x.d)} m`)).join("")}</div>`
           : `<p class="empty">${NEARBY_M} 公尺內沒有站牌</p>`);
       return;
     }
-    const rs = C.searchRoutes(CITY.routes, q, 14), ss = C.searchStops(CITY.plats, q, 6);
+    const rs = C.searchRoutes(CITY.routes, q, 14), ss = C.searchStops(CITY.plats, q, 6, SIB);
     box.innerHTML =
       (rs.length ? `<h2>路線</h2><div class="card">${rs.map((r) => `<button type="button" class="pick route" data-route="${esc(r[0])}">${badgeHTML(r[1], null, "sm")}` +
         `<span><b>${esc(r[4])} ↔ ${esc(r[5])}</b><small>${esc(cityName(r[2]))}</small></span><em>›</em></button>`).join("")}</div>` : "") +
-      (ss.length ? `<h2>站名</h2><div class="card">${ss.map((x) => stopRow(x.name, routesAt(x.plats), "›")).join("")}</div>` : "") +
+      (ss.length ? `<h2>站名</h2><div class="card">${ss.map((x) => stopRow(x, "›")).join("")}</div>` : "") +
       (!rs.length && !ss.length ? `<p class="empty">找不到「${esc(q)}」。目前涵蓋${Object.values(CITY.sources).map((x) => x.name).join("、")}的路線與站牌。</p>` : "");
   }
   function routePageOf(key) {

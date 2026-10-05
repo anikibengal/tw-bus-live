@@ -1114,6 +1114,117 @@ test("關注的單位鍵對得上全市索引；路線名拆成號碼與後綴�
   assert.deepEqual(["307", "57", "265區", "1000", "藍32", "57區"].sort(C.routeCompare), ["57", "57區", "265區", "307", "1000", "藍32"]);
 });
 
+// ---------------------------------------------------------------- 站名只差括號的站：合成一個地點
+const SB = { lat: 25.01, lon: 121.46 };
+/** 一根站牌的索引列：編號、站名、在基準點北方／東方幾公尺、停靠的 [路線序號, 方向]…。 */
+const splat = (id, name, north, east = 0, units = []) =>
+  [id, name, SB.lat + north / 110540, SB.lon + east / (111320 * Math.cos(SB.lat * Math.PI / 180)), units.map(([ri, g]) => [ri, g, 0])];
+/** 分組結果寫成好比對的樣子：[[畫面上的名字, 代表站名, [站名…]]…]，照代表站名排。 */
+const groupsList = (G) => [...new Set(G.values())].map((g) => [g.label, g.key, g.names]).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+
+test("站名拆成括號前面與括號裡的字；全形括號也認得", () => {
+  assert.deepEqual(["新北板橋公車站(新府路)", "甲站（乙路）", "甲站 (乙路)", "甲站", "甲站(一)(二)", "(乙路)", "甲站()", "甲站(乙路)前"].map(C.splitStopName),
+    [["新北板橋公車站", "新府路"], ["甲站", "乙路"], ["甲站", "乙路"], ["甲站", ""], ["甲站(一)", "二"], ["(乙路)", ""], ["甲站()", ""], ["甲站(乙路)前", ""]]);
+});
+
+test("站名只差括號、夠近就合成一個地點：代表站名、畫面上的名字、整組站名", () => {
+  // 板橋公車站那樣：沒括號的站兩根站牌，帶括號的在 60 公尺外，停的路線不一樣
+  const plats = [splat(1, "甲站", 0, 0, [[1, 0]]), splat(2, "甲站", 20, 0, [[1, 1]]), splat(3, "甲站(乙路)", 80, 0, [[2, 0]]), splat(4, "丙站", 30, 0, [[3, 0]])];
+  const G = C.stopGroups(plats);
+  assert.deepEqual(groupsList(G), [["甲站", "甲站", ["甲站", "甲站(乙路)"]]]);
+  assert.equal(G.get("甲站"), G.get("甲站(乙路)"), "同一組的站名拿到同一個物件");
+  assert.equal(G.has("丙站"), false, "沒有合的站名不在裡面");
+  assert.deepEqual(groupsList(C.stopGroups([...plats].reverse())), groupsList(G), "和站牌的順序無關");
+  assert.equal(C.stopGroups([]).size, 0);
+  // 全形括號、括號前面有空白：一樣認得
+  assert.deepEqual(groupsList(C.stopGroups([splat(1, "甲站", 0), splat(2, "甲站（乙路）", 50), splat(3, "甲站 (丁街)", 60)])).map((g) => g[2]), [["甲站", "甲站 (丁街)", "甲站（乙路）"]]);
+  // 括號前面的字要一樣：「甲站」和「甲站前」、「甲站(乙路)」和「甲站前(乙路)」都不是同一個
+  assert.equal(C.stopGroups([splat(1, "甲站", 0), splat(2, "甲站前", 10), splat(3, "甲站前站(乙路)", 20), splat(4, "甲(乙路)", 30)]).size, 0);
+});
+
+test("合成一個地點：最近的兩根站牌 200 公尺以內才合", () => {
+  const two = (m) => C.stopGroups([splat(1, "甲站", 0), splat(2, "甲站(乙路)", m)]).size;
+  assert.deepEqual([199, 201].map(two), [2, 0]);
+  assert.equal(C.P.siblingM, 200);
+  // 看的是最近的那一對站牌：甲站另一根在 900 公尺外不影響
+  assert.equal(C.stopGroups([splat(1, "甲站", -900), splat(2, "甲站", 0), splat(3, "甲站(乙路)", 150)]).size, 2);
+  assert.equal(C.stopGroups([splat(1, "甲站", -900), splat(3, "甲站(乙路)", 150)]).size, 0);
+  // 門檻可以另外給
+  assert.equal(C.stopGroups([splat(1, "甲站", 0), splat(2, "甲站(乙路)", 150)], 100).size, 0);
+});
+
+test("合成一個地點：沿線的前後兩站不合（兩邊都停的路線方向到較少那一邊的一半）", () => {
+  const pair = (ua, ub) => C.stopGroups([splat(1, "甲站", 0, 0, ua), splat(2, "甲站(乙路)", 60, 0, ub)]).size > 0;
+  assert.equal(pair([[1, 0], [2, 0]], [[3, 0]]), true, "沒有共同的");
+  assert.equal(pair([[1, 0], [2, 0], [3, 0]], [[1, 0], [4, 0], [5, 0]]), true, "三條裡一條共同：不到一半");
+  assert.equal(pair([[1, 0], [2, 0], [3, 0]], [[1, 0], [4, 0]]), false, "較少那一邊兩條裡一條共同：剛好一半，不合");
+  assert.equal(pair([[1, 0], [2, 0], [3, 0], [4, 0], [5, 0]], [[1, 0]]), false, "較少那一邊唯一的一條也停另一站：它只是下一站");
+  assert.equal(pair([[1, 0]], [[1, 1]]), true, "同一條路線的去程與返程不算共同（那是馬路兩側）");
+  assert.equal(pair([], [[1, 0]]), true, "沒有路線資料的不擋");
+  assert.equal(C.P.siblingShare, 0.5);
+  // 比例可以另外給
+  assert.equal(C.stopGroups([splat(1, "甲站", 0, 0, [[1, 0], [2, 0]]), splat(2, "甲站(乙路)", 60, 0, [[1, 0]])], 200, 1.01).size, 2);
+  // 同一個站名的兩根站牌各停一條：算在一起比
+  assert.equal(C.stopGroups([splat(1, "甲站", 0, 0, [[1, 0]]), splat(2, "甲站", 10, 0, [[2, 0]]), splat(3, "甲站(乙路)", 60, 0, [[1, 0], [2, 0], [3, 0], [4, 0], [5, 0]])]).size, 0);
+});
+
+test("合成一個地點：要和那一組的每一個站名都合，從最近的一對開始", () => {
+  // 一長串：甲(A)—100—甲(B)—150—甲(C)，頭尾相隔 250 → 最近的那一對合起來，第三個自己一個
+  const line = [splat(1, "甲站(A)", 0), splat(2, "甲站(B)", 100), splat(3, "甲站(C)", 250)];
+  assert.deepEqual(groupsList(C.stopGroups(line)).map((g) => g[2]), [["甲站(A)", "甲站(B)"]]);
+  // 換成後面那一對比較近：合的是後面那一對
+  assert.deepEqual(groupsList(C.stopGroups([splat(1, "甲站(A)", 0), splat(2, "甲站(B)", 150), splat(3, "甲站(C)", 250)])).map((g) => g[2]), [["甲站(B)", "甲站(C)"]]);
+  // 三個彼此都在 200 公尺內：一組
+  assert.deepEqual(groupsList(C.stopGroups([splat(1, "甲站(A)", 0), splat(2, "甲站(B)", 90), splat(3, "甲站(C)", 180)])).map((g) => g[2]), [["甲站(A)", "甲站(B)", "甲站(C)"]]);
+  // 合的先後不影響結果：(A)(C) 最近先合，(B) 後來才進來——整組的站名照樣照順序排，代表站名是排最前面的
+  const late = C.stopGroups([splat(1, "甲站(A)", 0), splat(2, "甲站(B)", 120), splat(3, "甲站(C)", 50)]);
+  assert.deepEqual(groupsList(late), [["甲站", "甲站(A)", ["甲站(A)", "甲站(B)", "甲站(C)"]]]);
+  assert.deepEqual(groupsList(C.stopGroups([splat(1, "甲站", 120), splat(2, "甲站(B)", 0), splat(3, "甲站(C)", 50)])), [["甲站", "甲站", ["甲站", "甲站(B)", "甲站(C)"]]]);
+  // 夠近但是沿線兩站的那一對，也會擋住整組：(A)(C) 是前後兩站，(B) 只能和最近的那一個在一起
+  const blocked = [splat(1, "甲站(A)", 0, 0, [[1, 0]]), splat(2, "甲站(B)", 80, 0, [[2, 0]]), splat(3, "甲站(C)", 180, 0, [[1, 0]])];
+  assert.deepEqual(groupsList(C.stopGroups(blocked)).map((g) => g[2]), [["甲站(A)", "甲站(B)"]]);
+  // 距離一樣：照站名排，結果和站牌的順序無關
+  const tie = [splat(1, "甲站(A)", 0), splat(2, "甲站(B)", 150), splat(3, "甲站(C)", 300)];
+  const want = groupsList(C.stopGroups(tie));
+  assert.deepEqual(want.map((g) => g[2]), [["甲站(A)", "甲站(B)"]]);
+  for (const order of [[2, 1, 0], [1, 2, 0], [2, 0, 1]]) assert.deepEqual(groupsList(C.stopGroups(order.map((i) => tie[i]))), want, order.join(""));
+});
+
+test("合成一個地點的名字：括號前面的字；會和別的地點同名時把括號裡的字列出來", () => {
+  // 沒括號的那個不存在：就叫括號前面的字，代表站名是排最前面的
+  assert.deepEqual(groupsList(C.stopGroups([splat(1, "甲站(乙路)", 0), splat(2, "甲站(丁街)", 100)])), [["甲站", "甲站(丁街)", ["甲站(丁街)", "甲站(乙路)"]]]);
+  // 沒括號的那個站名自己是另一個站（在 5 公里外）：不能也叫甲站
+  assert.deepEqual(groupsList(C.stopGroups([splat(1, "甲站(乙路)", 0), splat(2, "甲站(丁街)", 100), splat(3, "甲站", 5000)])), [["甲站(丁街・乙路)", "甲站(丁街)", ["甲站(丁街)", "甲站(乙路)"]]]);
+  // 同一個括號前面有兩組：有沒括號那個的叫甲站，另一組列出括號裡的字
+  const two = [splat(1, "甲站", 0), splat(2, "甲站(乙路)", 100), splat(3, "甲站(丁街)", 3000), splat(4, "甲站(戊巷)", 3100)];
+  assert.deepEqual(groupsList(C.stopGroups(two)), [["甲站", "甲站", ["甲站", "甲站(乙路)"]], ["甲站(丁街・戊巷)", "甲站(丁街)", ["甲站(丁街)", "甲站(戊巷)"]]]);
+  // 兩組都沒有沒括號的那個：兩組都列
+  assert.deepEqual(groupsList(C.stopGroups(two.slice(1).concat([splat(5, "甲站(己弄)", 150)]))).map((g) => g[0]), ["甲站(丁街・戊巷)", "甲站(乙路・己弄)"]);
+});
+
+test("搜尋站名與附近的站：合成一個地點的站名算一筆", () => {
+  const plats = [splat(1, "甲站", 0, 0, [[1, 0]]), splat(2, "甲站(乙路)", 80, 0, [[2, 0]]), splat(3, "甲站(丁街)", 5000), splat(4, "乙路口", 40)];
+  const G = C.stopGroups(plats);
+  const pick = (r) => r.map((x) => [x.name, x.label, x.plats.map((q) => q[0])]);
+  // 其中一個站名符合：列出整組，站牌也是整組的；打開用代表站名
+  assert.deepEqual(pick(C.searchStops(plats, "乙路", 10, G)), [["乙路口", "乙路口", [4]], ["甲站", "甲站", [1, 2]]], "排序照畫面上的名字：開頭相符的排前面");
+  assert.deepEqual(pick(C.searchStops(plats, "甲站", 10, G)), [["甲站", "甲站", [1, 2]], ["甲站(丁街)", "甲站(丁街)", [3]]]);
+  assert.deepEqual(pick(C.searchStops(plats, "甲站", 1, G)), [["甲站", "甲站", [1, 2]]], "筆數上限算的是地點");
+  // 畫面上的名字和代表站名不一樣的一組（沒有沒括號的那個站名）：排序看的是畫面上的名字「戊站」，所以排在「戊站口」前面
+  const more = [splat(1, "戊站(乙路)", 0), splat(2, "戊站(丁街)", 60), splat(3, "戊站口", 30)];
+  assert.deepEqual(pick(C.searchStops(more, "戊站", 10, C.stopGroups(more))), [["戊站(丁街)", "戊站", [1, 2]], ["戊站口", "戊站口", [3]]]);
+  assert.deepEqual(C.nearestStops(more, SB, 500, 10, C.stopGroups(more)).map((x) => [x.name, x.label]), [["戊站(丁街)", "戊站"], ["戊站口", "戊站口"]]);
+  // 沒給分組：照舊每個站名一筆
+  assert.deepEqual(pick(C.searchStops(plats, "甲站", 10)), [["甲站", "甲站", [1]], ["甲站(乙路)", "甲站(乙路)", [2]], ["甲站(丁街)", "甲站(丁街)", [3]]]);
+  // 附近的站：整組一筆，距離是最近那根；範圍外的站牌不算進來
+  const me = { lat: SB.lat + 70 / 110540, lon: SB.lon };
+  const near = (maxM, limit, g) => C.nearestStops(plats, me, maxM, limit, g).map((x) => [x.name, x.label, Math.round(x.d), x.plats.map((q) => q[0])]);
+  assert.deepEqual(near(500, 10, G), [["甲站", "甲站", 10, [2, 1]], ["乙路口", "乙路口", 30, [4]]]);
+  assert.deepEqual(near(50, 10, G), [["甲站", "甲站", 10, [2]], ["乙路口", "乙路口", 30, [4]]]);
+  assert.deepEqual(near(500, 1, G), [["甲站", "甲站", 10, [2, 1]]]);
+  assert.deepEqual(near(500, 10), [["甲站(乙路)", "甲站(乙路)", 10, [2]], ["乙路口", "乙路口", 30, [4]], ["甲站", "甲站", 70, [1]]]);
+});
+
 test("附近的站：同名站牌歸成一個站名，照最近那根的距離排", () => {
   const me = { lat: 25.05, lon: 121.5 };
   const at = (north, east) => [me.lat + north / 110540, me.lon + east / (111320 * Math.cos(me.lat * Math.PI / 180))];
