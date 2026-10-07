@@ -88,6 +88,10 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 右邊還有東西時淡出，提示可以往右滑 */
 .seg.more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
 .hint { color: var(--ink-3); font-size: 12px; margin: 0; }
+.ckind { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; border: 1px solid var(--warn); color: var(--warn); white-space: nowrap; vertical-align: 1px; }      /* 車輛類型（不是低底盤的才註記） */
+.ckind.plain { border-color: var(--line); color: var(--ink-2); font-weight: 400; }      /* 低底盤：最常見的那一種，淡一點 */
+.ckind-t { font-weight: 700; color: var(--warn); }
+@media (max-width: 360px) { .rt-sub .ckind-p { display: none; } }
 .vchip { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; color: var(--chip-ink); background: var(--c); white-space: nowrap; }
 .early { font-size: 11.5px; font-weight: 600; color: var(--warn); margin-left: 6px; white-space: nowrap; }
 select, input[type="search"] { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 7px 10px; min-height: 36px; }
