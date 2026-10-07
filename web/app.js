@@ -47,7 +47,7 @@ function startApp() {
   // 動態：只在「畫面剛變了」的時候動一下，讓人看得出變了什麼。系統設成減少動態效果、或頁面不在前景時都不動。
   const canMove = () => !REDUCED_MOTION && !document.hidden && typeof Element.prototype.animate === "function";
   const EASE = "cubic-bezier(.2, .8, .2, 1)";
-  const motion = { slides: 0, flips: 0, fades: 0 };      // 各做了幾次（除錯用）
+  const motion = { slides: 0, flips: 0, fades: 0, strip: 0, pulses: 0 };      // 各做了幾次（除錯用）
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const fmt = (ms) => (ms == null || !Number.isFinite(ms) ? "--:--" : C.fmtTime(ms));
   const ls = {
@@ -635,7 +635,8 @@ function startApp() {
     const open = state.openRow === r.it.unit;
     const src = !a ? "" : a.source === "官方・未發車" || a.source === "班表" ? "未發車" : a.source === "班距" ? "依班距" : "";
     const sub = !a ? idleText(r.it) : [early, src].filter(Boolean).join("・");
-    return `<article class="rt${hot ? " hot" : ""}"><button type="button" class="rt-main" data-row="${esc(r.it.unit)}" aria-expanded="${open}">` +
+    const near = a && !a.upper && shownMin(a, now) <= 1;      // 一分鐘內到（含到站）：這一列輕輕呼吸，提醒該動了
+    return `<article class="rt${hot ? " hot" : ""}${near ? " near" : ""}"><button type="button" class="rt-main" data-row="${esc(r.it.unit)}" aria-expanded="${open}">` +
       `<span class="rt-id">${badgeHTML(r.label, r.col)}${r.at ? "" : `<span class="rt-to">往 ${esc(r.toward)}</span>`}</span>` +
       `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}"${a ? ` title="${esc(srcTitle(a.source))}"` : ""}>${big.about ? "<small>約</small>" : ""}<span class="num" data-num="${esc(big.num)}">${esc(big.num)}</span>${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${esc(sub)}</span></span>` +
       `<span class="rt-later"><small>再來</small><b>${later.length ? later.join("、") + " 分" : "—"}</b></span>` +
@@ -822,6 +823,8 @@ function startApp() {
     flipNumbers(board, listId);
     if (state.openRow && state.openRow !== lastOpenShown) { const b = [...board.querySelectorAll("[data-row]")].find((x) => x.dataset.row === state.openRow); fadeIn(b && b.closest(".rt").querySelector(".rt-more"), -6); }
     lastOpenShown = state.openRow;
+    // 呼吸的節奏對齊時鐘：清單每幾秒整塊重畫，不對齊的話每重畫一次呼吸就從頭來一次
+    for (const el of board.querySelectorAll(".rt.near")) for (const an of el.getAnimations()) if (an.animationName === "breathe") an.startTime = 0;
     renderPick(pv, pl, now);
   }
   /** 關注或取消一條路線（選路線面板裡的開關、展開列裡的「不再關注」）。 */
@@ -1376,9 +1379,22 @@ function startApp() {
         (arr[1] ? stripArrival(arr[1], now, "second") : `<div class="arr second"></div>`) +
         `<button type="button" class="star" data-stop="${esc(row.name)}" data-unit="${esc(C.unitKey(g.vs.find((v) => row.by[v.key] != null)))}" aria-label="到等車頁看 ${esc(row.name)}" title="到等車頁等這條路線">›</button></li>`);
     });
-    $("#strip").innerHTML = html.join("");
+    // 車過了一站：它那一列從原本的位置滑到下一站前面，被它越過的站往上讓（整塊換掉之前先記下每一列在哪）
+    const strip = $("#strip"), sig = g.id + "|" + (currentPlace() || {}).id;
+    const keyOf = (li) => li.id || "bus:" + ((li.querySelector("[data-bus]") || {}).dataset || {}).bus;
+    const tops = sig === lastStripSig && canMove() ? new Map([...strip.children].map((li) => [keyOf(li), li.getBoundingClientRect().top])) : null;
+    strip.innerHTML = html.join("");
+    if (tops) for (const li of strip.children) {
+      const was = tops.get(keyOf(li));
+      if (was == null) continue;
+      const dy = was - li.getBoundingClientRect().top;
+      if (Math.abs(dy) < 2) continue;
+      const bus = li.classList.contains("bus-row");
+      li.style.position = "relative"; li.style.zIndex = bus ? "2" : "1";
+      li.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: bus ? 600 : 450, easing: EASE }).onfinish = () => { li.style.position = ""; li.style.zIndex = ""; };
+      if (bus) motion.strip++;
+    }
     // 換了路線、方向或地點：把這個地點的那一站捲到看得到的地方（只做一次，之後不跟使用者自己的捲動搶）
-    const sig = g.id + "|" + (currentPlace() || {}).id;
     if (sig !== lastStripSig) {
       lastStripSig = sig;
       const el = mine >= 0 ? document.getElementById(`row-${mine}`) : null;
@@ -1437,9 +1453,17 @@ function startApp() {
   }
 
   // ---------------------------------------------------------------- 頁首、說明、分頁
+  let lastPulse = null;                                 // 上一次閃的時候是哪一筆資料
   function renderHeader() {
     const err = [errs.bus, errs.eta].filter(Boolean).join("；");
     const age = state.busUpdate ? Math.max(0, Math.round((nowMs() - state.busUpdate) / 1000)) : null;
+    // 資料時間旁的小點：新資料進來閃一下；資料舊了或連不上就變灰
+    const live = $("#live");
+    live.classList.toggle("off", age == null || age > 60 || !!err);
+    if (state.busUpdate && state.busUpdate !== lastPulse) {
+      if (lastPulse != null && canMove()) { live.firstElementChild.animate([{ transform: "scale(1)", opacity: .55 }, { transform: "scale(3.2)", opacity: 0 }], { duration: 900, easing: "ease-out" }); motion.pulses++; }
+      lastPulse = state.busUpdate;
+    }
     const when = state.busUpdate ? `${fmt(state.busUpdate)}・${age < 60 ? age + " 秒前" : Math.round(age / 60) + " 分鐘前"}` : "等待資料";
     $("#status").innerHTML = (REPLAY ? `<span class="warn">重播 ${esc(REPLAY)}（非即時）・</span>` : "") +
       (age != null && age > 60 ? `<span class="warn">資料較舊：</span>` : "") + esc(when) +
