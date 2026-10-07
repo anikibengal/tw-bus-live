@@ -1731,3 +1731,28 @@ test("車輛資料裡的車輛類型記在車上，後來的資料會更新它",
   assert.equal(tr.buses.get("A").carType, "1");
 });
 
+// ---------------------------------------------------------------- 現在的時速
+test("現在的時速：定位夠新、數值合理才寫；停著寫 0", () => {
+  assert.equal(C.speedLabel(24, 5), "24 km/h");
+  assert.equal(C.speedLabel("24", 5), "24 km/h", "資料裡是字串");
+  assert.equal(C.speedLabel(0, 5), "0 km/h", "停著也寫");
+  assert.equal(C.speedLabel("0", 0), "0 km/h");
+  assert.equal(C.speedLabel(23.6, 5), "24 km/h");
+  // 定位太舊：不寫（門檻 45 秒）
+  assert.deepEqual([44, 45, 46, 300].map((age) => C.speedLabel(30, age)), ["30 km/h", "30 km/h", "", ""]);
+  assert.equal(C.P.speedFreshS, 45);
+  assert.equal(C.speedLabel(30, undefined), "", "不知道定位多舊：不寫");
+  assert.equal(C.speedLabel(30, NaN), "");
+  // 壞值：不寫（門檻 110）
+  assert.deepEqual([110, 111, 430, -1].map((v) => C.speedLabel(v, 5)), ["110 km/h", "", "", ""]);
+  assert.equal(C.P.speedMaxKmh, 110);
+  assert.deepEqual([null, undefined, "", "abc", NaN].map((v) => C.speedLabel(v, 5)), ["", "", "", "", ""], "沒有數值：不寫（不能當成 0）");
+});
+
+test("營運中的車帶著車輛資料回報的車速", () => {
+  const tr = trackerWith([["09:20", [{ ...fix("A", 4, "09:20", { route: "901" }), Speed: "27" }, { ...fix("B", 1, "09:20", { route: "901" }), Speed: "0" }]]], [TT]);
+  const act = C.activeBuses(tr, "901", T("09:20") + 20e3);
+  assert.deepEqual(act.map((b) => [b.id, b.speed, Math.round(b.ageS)]), [["A", 27, 20], ["B", 0, 20]]);
+  assert.deepEqual(act.map((b) => C.speedLabel(b.speed, b.ageS)), ["27 km/h", "0 km/h"]);
+});
+

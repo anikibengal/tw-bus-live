@@ -88,10 +88,12 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 右邊還有東西時淡出，提示可以往右滑 */
 .seg.more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
 .hint { color: var(--ink-3); font-size: 12px; margin: 0; }
+.spd { color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }      /* 這台車現在的時速 */
+.bc-h .spd { font-size: 12px; }
 .ckind { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; border: 1px solid var(--warn); color: var(--warn); white-space: nowrap; vertical-align: 1px; }      /* 車輛類型（不是低底盤的才註記） */
 .ckind.plain { border-color: var(--line); color: var(--ink-2); font-weight: 400; }      /* 低底盤：最常見的那一種，淡一點 */
 .ckind-t { font-weight: 700; color: var(--warn); }
-@media (max-width: 360px) { .rt-sub .ckind-p { display: none; } }
+@media (max-width: 360px) { .rt-sub .ckind-p, .bus .ckind.plain { display: none; } }
 .vchip { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; color: var(--chip-ink); background: var(--c); white-space: nowrap; }
 .early { font-size: 11.5px; font-weight: 600; color: var(--warn); margin-left: 6px; white-space: nowrap; }
 select, input[type="search"] { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 7px 10px; min-height: 36px; }
@@ -322,8 +324,9 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .sheet-body .arow[aria-current="true"] { background: var(--surface-2); }
 /* 選中的那台車：接下來各站 */
 .bc-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
-.bc-h > div { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.bc-h b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.bc-h > div { display: flex; align-items: center; gap: 2px 6px; min-width: 0; flex-wrap: wrap; }      /* 放不下時整塊換行（車牌不在中間斷開） */
+.bc-h b { font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bc-h .ckind { margin-left: 0; }
 .bc-dir { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .bc-x { font-size: 20px; line-height: 1; width: 44px; height: 44px; border: 0; border-radius: 8px; background: none; color: var(--ink-2); cursor: pointer; }
 .bc-x:hover { background: var(--surface-2); }
@@ -380,7 +383,9 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .bus { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 12px; padding: 3px 8px; cursor: pointer; }
 .bus svg { width: 14px; height: 14px; fill: var(--c); flex: none; }
 .bus .plate { font-variant-numeric: tabular-nums; }
+.bus { white-space: nowrap; flex-wrap: wrap; max-width: 100%; }      /* 一條放不下時整塊換行，字不在中間斷開 */
 .bus .dist { color: var(--ink-3); }
+.bus .ckind { margin-left: 0; }
 .bus-row .rail .bdot { position: absolute; left: 3px; top: 50%; margin-top: -8px; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px var(--bg); }
 @media (max-width: 640px) {
   /* 手機：站名一行，下一班、下下班各佔一整行（時間與車牌排在同一行），一站約三行高 */
