@@ -44,6 +44,10 @@ function startApp() {
   const $ = (s) => document.querySelector(s);
   /** 換掉一塊的內容；和上次一樣就不動（每幾秒重算一次，手指正按著的按鈕被換掉的話那一下就按空了）。 */
   const setHTML = (sel, html) => { const el = $(sel); if (el.__html !== html) { el.innerHTML = html; el.__html = html; } };
+  // 動態：只在「畫面剛變了」的時候動一下，讓人看得出變了什麼。系統設成減少動態效果、或頁面不在前景時都不動。
+  const canMove = () => !REDUCED_MOTION && !document.hidden && typeof Element.prototype.animate === "function";
+  const EASE = "cubic-bezier(.2, .8, .2, 1)";
+  const motion = { slides: 0, flips: 0, fades: 0 };      // 各做了幾次（除錯用）
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const fmt = (ms) => (ms == null || !Number.isFinite(ms) ? "--:--" : C.fmtTime(ms));
   const ls = {
@@ -633,7 +637,7 @@ function startApp() {
     const sub = !a ? idleText(r.it) : [early, src].filter(Boolean).join("・");
     return `<article class="rt${hot ? " hot" : ""}"><button type="button" class="rt-main" data-row="${esc(r.it.unit)}" aria-expanded="${open}">` +
       `<span class="rt-id">${badgeHTML(r.label, r.col)}${r.at ? "" : `<span class="rt-to">往 ${esc(r.toward)}</span>`}</span>` +
-      `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}"${a ? ` title="${esc(srcTitle(a.source))}"` : ""}>${big.about ? "<small>約</small>" : ""}${big.num}${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${esc(sub)}</span></span>` +
+      `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}"${a ? ` title="${esc(srcTitle(a.source))}"` : ""}>${big.about ? "<small>約</small>" : ""}<span class="num" data-num="${esc(big.num)}">${esc(big.num)}</span>${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${esc(sub)}</span></span>` +
       `<span class="rt-later"><small>再來</small><b>${later.length ? later.join("、") + " 分" : "—"}</b></span>` +
       (r.at ? `<span class="rt-where">${esc(r.at.label)}・往 ${esc(r.toward)}</span>` : "") + `</button>` +
       (open ? rowDetailHTML(r, now) : "") + `</article>`;
@@ -661,8 +665,8 @@ function startApp() {
   /** 「選路線」面板：只列現在這個候車位置停的路線（「全部」時是這個站每個位置的），順序固定（照路線號碼），每列一顆關注開關；沒關注的只列官方的下一班。 */
   function renderPick(pv, pl, now) {
     const box = $("#picker"), cur = pv.cur;
-    box.hidden = !(state.pick && cur);
-    if (box.hidden) return;
+    showPicker(!!(state.pick && cur));
+    if (box.hidden || box.classList.contains("out")) return;
     const wk = watch[pl.id] || [], items = cur.items;
     $("#pickTitle").textContent = pl.name;
     $("#pickSub").textContent = (pv.pos.length > 1 || cur.addr ? cur.long + "・" : "") + items.length + " 條";
@@ -690,6 +694,15 @@ function startApp() {
       `<button type="button" class="pick" data-pos="${esc(x.id)}"><span><b>${esc(x.long)}</b></span><em>${x.items.filter(hit).length} 條 ›</em></button>`).join(""));
     setHTML("#pickFoot", !pl.fixed && !pl.temp ? `<button type="button" class="link" data-unsave="${esc(pl.key)}">把「${esc(pl.name)}」從常用站移除</button>` : "");
   }
+  /** 選路線面板開或關。關的時候先滑下去再藏起來（不能動的時候直接藏）。 */
+  function showPicker(on) {
+    const box = $("#picker");
+    if (on) { box.classList.remove("out"); box.hidden = false; return; }
+    if (box.hidden || box.classList.contains("out")) return;
+    if (!canMove()) { box.hidden = true; return; }
+    box.classList.add("out");
+    setTimeout(() => { if (box.classList.contains("out")) { box.hidden = true; box.classList.remove("out"); } }, 190);
+  }
   function openPick() {
     const pl = currentPlace(), pv = pl && placeView(pl);
     if (!pv || !pv.cur) return;
@@ -705,6 +718,58 @@ function startApp() {
   }
   let lastPlaceShown = null;
   let lastOrder = { id: "", units: [] };                // 等車頁上一次畫出來的上下順序（哪個地點、哪個候車位置的）
+  let lastNums = { id: "", by: new Map() };             // 上一次每一列的大數字（翻牌要知道原本是什麼）
+  let lastOpenShown = null, pressing = false;           // 上一次展開的是哪一列；手指是不是正按在清單上
+  /** 列換了上下位置：從原本的位置滑到新的位置（內容是整塊換掉的，所以先記下每一列原本在哪）。 */
+  function slideRows(board, tops) {
+    for (const b of board.querySelectorAll("[data-row]")) {
+      const el = b.closest(".rt"), was = tops.get(b.dataset.row);
+      if (was == null) continue;
+      const dy = was - el.getBoundingClientRect().top;
+      if (Math.abs(dy) < 2) continue;
+      el.style.position = "relative"; el.style.zIndex = dy > 0 ? "2" : "1";      // 往上超車的那一列蓋在上面
+      el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 300, easing: EASE }).onfinish = () => { el.style.position = ""; el.style.zIndex = ""; };
+      motion.slides++;
+    }
+  }
+  /**
+   * 一格翻牌：上半片（舊的）往下翻、蓋住的下半片（新的）跟著翻下來，像老車站的看板。
+   * 靜止時仍然是一般的字，翻的那 0.4 秒才有上下兩片。
+   */
+  function flipNum(el, was, now) {
+    const half = 210;
+    const widthOf = (txt) => { el.textContent = txt; return el.getBoundingClientRect().width; };
+    const cells = C.flapCells(was, now), wide = cells.length === 1 ? Math.max(widthOf(was), widthOf(now)) : 0;      // 整個一起翻：舊的可能比新的寬（10 → 9），翻的時候先留舊的寬度
+    el.textContent = "";
+    for (const [a, b] of cells) {
+      const cell = document.createElement("span"); cell.className = "flap"; cell.textContent = b;
+      if (wide) cell.style.minWidth = wide + "px";
+      el.appendChild(cell);
+      if (a === b) continue;
+      const piece = (cls, ch) => { const p = document.createElement("span"); p.className = "flap-h " + cls; p.textContent = ch; p.setAttribute("aria-hidden", "true"); cell.appendChild(p); return p; };
+      const oldBot = piece("bot", a), oldTop = piece("top", a), newBot = piece("bot", b);
+      cell.classList.add("on");
+      oldTop.animate([{ transform: "rotateX(0deg)" }, { transform: "rotateX(-90deg)" }], { duration: half, easing: "ease-in", fill: "forwards" });
+      newBot.animate([{ transform: "rotateX(90deg)" }, { transform: "rotateX(0deg)" }], { duration: half, delay: half, easing: "ease-out", fill: "both" })
+        .onfinish = () => { for (const p of [oldBot, oldTop, newBot]) p.remove(); cell.classList.remove("on"); cell.style.minWidth = ""; };
+    }
+    motion.flips++;
+  }
+  /** 每一列的大數字和上一次比：同一個清單裡數字變了的翻牌。換了地點或候車位置不翻（那是換一整份清單）。 */
+  function flipNumbers(board, listId) {
+    const els = new Map([...board.querySelectorAll("[data-row]")].map((b) => [b.dataset.row, b.querySelector(".num")]));
+    if (lastNums.id === listId && canMove()) for (const [u, el] of els) {
+      const was = lastNums.by.get(u);
+      if (el && was != null && was !== el.dataset.num) flipNum(el, was, el.dataset.num);
+    }
+    lastNums = { id: listId, by: new Map([...els].filter(([, el]) => el).map(([u, el]) => [u, el.dataset.num])) };
+  }
+  /** 一塊內容淡進來（換地點、換候車位置、展開一列）。 */
+  function fadeIn(el, dy) {
+    if (!el || !canMove()) return;
+    el.animate([{ opacity: 0, transform: `translateY(${dy}px)` }, { opacity: 1, transform: "none" }], { duration: 200, easing: EASE });
+    motion.fades++;
+  }
   const placeChipsHTML = (pl) => allPlaces().map((p) =>
     `<button type="button" data-place="${esc(p.id)}" aria-pressed="${!!pl && p.id === pl.id}"${p.temp ? ' class="temp"' : ""}>${esc(p.name)}</button>`).join("");
   /** 橫向捲動的那一列：右邊還有東西時加上淡出，提示可以往右滑。 */
@@ -741,13 +806,22 @@ function startApp() {
     // 越快到的越上面（規則在 core.arrivalOrder）。「全部」也是整個一起排，不分候車位置，每一列自己寫在哪裡等
     const byUnit = new Map(pv.rows.map((r) => [r.it.unit, r])), listId = pv.cur ? pl.id + "|" + pv.cur.id : "";
     const mins = Object.fromEntries(pv.rows.map((r) => [r.it.unit, shownMin(r.arr[0], now)]));
-    const order = C.arrivalOrder([...byUnit.keys()], mins, lastOrder.id === listId ? lastOrder.units : null, !!state.openRow);
+    // 有一列展開著、或手指正按在清單上：先不換順序（要按的那一列跑掉就按錯了）
+    const sameList = lastOrder.id === listId, before = lastOrder.units;
+    const order = C.arrivalOrder([...byUnit.keys()], mins, sameList ? before : null, !!state.openRow || pressing);
     lastOrder = { id: listId, units: order };
+    const board = $("#board"), reordered = sameList && before.length > 0 && before.join("\n") !== order.join("\n");
+    const tops = reordered && canMove() ? new Map([...board.querySelectorAll("[data-row]")].map((b) => [b.dataset.row, b.closest(".rt").getBoundingClientRect().top])) : null;
     // 最快到的那一列外框加深：確定有車的（依班距的那一筆不算）裡面分鐘數最小的；一樣的話是排在上面的那一列
     const sure = order.filter((u) => mins[u] != null && !byUnit.get(u).arr[0].upper);
     const hot = sure.find((u) => mins[u] === Math.min(...sure.map((x) => mins[x])));
     setHTML("#board", order.map((u) => routeRowHTML(byUnit.get(u), now, u === hot)).join("") +
       (!pv.cur ? `<p class="empty">${esc(state.cityNote || "找不到這個站名的站牌")}</p>` : ""));
+    if (tops) slideRows(board, tops);
+    if (!sameList && lastNums.id) { fadeIn(board, 8); fadeIn($("#leave"), 8); }      // 換了地點或候車位置：整份清單淡進來
+    flipNumbers(board, listId);
+    if (state.openRow && state.openRow !== lastOpenShown) { const b = [...board.querySelectorAll("[data-row]")].find((x) => x.dataset.row === state.openRow); fadeIn(b && b.closest(".rt").querySelector(".rt-more"), -6); }
+    lastOpenShown = state.openRow;
     renderPick(pv, pl, now);
   }
   /** 關注或取消一條路線（選路線面板裡的開關、展開列裡的「不再關注」）。 */
@@ -1497,6 +1571,8 @@ function startApp() {
     if (t("[data-go-find]")) { state.routePage = null; return setTab("find"); }
     if ((x = t(".arow[data-bus]"))) return selectBus(x.dataset.bus, true);
   });
+  $("#board").addEventListener("pointerdown", () => { pressing = true; });
+  for (const ev of ["pointerup", "pointercancel"]) window.addEventListener(ev, () => { pressing = false; });
   $("#picker").addEventListener("click", (e) => {
     const t = (sel) => e.target.closest(sel);
     let x;
@@ -1601,6 +1677,6 @@ function startApp() {
   boot();
   setInterval(() => { if (!document.hidden) { compute(); render(); } }, 5e3);
   window.__busApp = { state, tracker, A, V, groups, stations, stMarkers, busMarkers, unitsOf, loaded, get watch() { return watch; }, get map() { return map; }, get city() { return CITY; },
-    get posSel() { return posSel; }, helpers, placeView, allPlaces, currentPlace, openStop, openRoute, ensureRoute };   // 除錯用
+    get posSel() { return posSel; }, helpers, placeView, allPlaces, currentPlace, openStop, openRoute, ensureRoute, motion, flipNum };   // 除錯用
 }
 startApp();

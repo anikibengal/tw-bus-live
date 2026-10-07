@@ -396,3 +396,28 @@ input[type="search"] { flex: 1; min-width: 140px; }
 #marey .nowt { fill: var(--ink); }
 #marey .axis { stroke: var(--line); }
 #marey .now { stroke: var(--ink); stroke-width: 1; }
+
+/* ---------------------------------------------------------------- 動態
+   只在「畫面剛變了」的時候動一下：面板滑上來、選單與分頁淡進來、大數字翻牌。列換位置的滑動與翻牌的轉動寫在 app.js。
+   系統設成「減少動態效果」的人完全不會看到這些。 */
+.num { display: inline-block; }
+.flap { position: relative; display: inline-block; perspective: 260px; }
+.flap-h { position: absolute; inset: 0; background: var(--surface); backface-visibility: hidden; transform-origin: 50% 50%; }
+.flap-h.top { clip-path: inset(0 0 50% 0); }
+.flap-h.bot { clip-path: inset(50% 0 0 0); }
+.flap.on::after { content: ""; position: absolute; left: -1px; right: -1px; top: calc(50% - .5px); height: 1px; background: var(--line); }      /* 翻的時候中間看得到一條縫 */
+.picker.out { pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes sheet-up { from { transform: translateY(100%); } }
+  @keyframes sheet-down { to { transform: translateY(100%); } }
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes fade-out { to { opacity: 0; } }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+  .picker:not([hidden]) .picker-box { animation: sheet-up .28s cubic-bezier(.2, .8, .2, 1); }
+  .picker:not([hidden]) .picker-bg { animation: fade-in .2s ease-out; }
+  .picker.out .picker-box { animation: sheet-down .19s ease-in forwards; }
+  .picker.out .picker-bg { animation: fade-out .19s ease-in forwards; }
+  .posmenu { animation: pop-in .16s cubic-bezier(.2, .8, .2, 1); transform-origin: 50% 0; }
+  .view:not([hidden]) { animation: fade-in .16s ease-out; }
+}
+

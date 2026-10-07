@@ -1695,3 +1695,21 @@ test("自己估的時刻寫「約」：官方報的不寫（含未發車、未�
   assert.ok(seen.has("官方") && seen.has("班表") && [...seen].some((s) => s.startsWith("官方→")), [...seen].join("、"));
 });
 
+// ---------------------------------------------------------------- 翻牌
+test("大數字翻牌要翻哪幾格：位數相同的數字一位一格，其餘整個一起翻", () => {
+  assert.deepEqual(C.flapCells("5", "4"), [["5", "4"]]);
+  assert.deepEqual(C.flapCells("12", "11"), [["1", "1"], ["2", "1"]], "十位沒變：那一格舊與新一樣（不翻）");
+  assert.deepEqual(C.flapCells("20", "19"), [["2", "1"], ["0", "9"]]);
+  assert.deepEqual(C.flapCells("10", "9"), [["10", "9"]], "位數不同：整個一起翻");
+  assert.deepEqual(C.flapCells("9", "10"), [["9", "10"]]);
+  assert.deepEqual(C.flapCells("1", "到站"), [["1", "到站"]]);
+  assert.deepEqual(C.flapCells("到站", "8"), [["到站", "8"]]);
+  assert.deepEqual(C.flapCells("12", "到站"), [["12", "到站"]], "字數一樣但新的不是數字：整個一起翻");
+  assert.deepEqual(C.flapCells("到站", "12"), [["到站", "12"]]);
+  assert.deepEqual(C.flapCells("≤5", "≤4"), [["≤5", "≤4"]], "不是純數字：整個一起翻");
+  assert.deepEqual(C.flapCells("—", "12"), [["—", "12"]]);
+  assert.deepEqual(C.flapCells("10:25", "10:26"), [["10:25", "10:26"]]);
+  assert.deepEqual(C.flapCells(5, 4), [["5", "4"]], "給數字也可以");
+  assert.deepEqual(C.flapCells("１２", "１１"), [["１２", "１１"]], "全形數字不算位數（當成一整格）");
+});
+
