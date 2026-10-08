@@ -65,10 +65,13 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tabs button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tabs button[aria-selected="true"] { color: var(--nav-on); font-weight: 700; }
 @media (max-width: 700px) {
-  /* 手機：分頁列是浮起來的深色圓角長條，四周露出頁面底色；選中的那一格是淺色圓底 */
-  .tabs { margin: 0 12px calc(10px + env(safe-area-inset-bottom)); padding: 6px; gap: 4px; border: 0; border-radius: 30px; box-shadow: 0 10px 26px rgba(37, 22, 21, .3); }
-  .tabs button { min-height: 50px; border-radius: 24px; padding: 6px 2px 7px; }
-  .tabs button[aria-selected="true"] { background: rgba(255, 255, 255, .13); }
+  /* 手機：分頁列是浮起來的深色圓角長條，四周露出頁面底色；選中的那一格是淺色圓底。
+     圓底是分頁列自己的一塊（::before），不是按鈕的底色：換分頁時它從舊的那一格滑到新的那一格。--tab-i＝選中的是第幾格（從 0 算），程式設的；
+     程式還沒設之前沒有圓底（.lit 是設了才加的），和原本「還沒選就沒有底色」一樣。
+     overflow: hidden：圓底到位時會晃一下（拉寬到 1.12 倍），螢幕比較寬時會超出分頁列的邊，裁掉。 */
+  .tabs { position: relative; overflow: hidden; margin: 0 12px calc(10px + env(safe-area-inset-bottom)); padding: 6px; gap: 4px; border: 0; border-radius: 30px; box-shadow: 0 10px 26px rgba(37, 22, 21, .3); }
+  .tabs.lit::before { content: ""; position: absolute; top: 6px; bottom: 6px; left: 6px; width: calc((100% - 24px) / 4); border-radius: 24px; background: rgba(255, 255, 255, .13); transform: translateX(calc(var(--tab-i, 0) * (100% + 4px))); }
+  .tabs button { position: relative; min-height: 50px; border-radius: 24px; padding: 6px 2px 7px; }
 }
 @media (min-width: 701px) {
   .tabs { order: -1; display: flex; gap: 4px; padding: 0 12px; border-top: 0; border-bottom: 1px solid var(--line); }
@@ -431,6 +434,10 @@ input[type="search"] { flex: 1; min-width: 140px; }
   .picker.out .picker-bg { animation: fade-out .19s ease-in forwards; }
   .posmenu { animation: pop-in .16s cubic-bezier(.2, .8, .2, 1); transform-origin: 50% 0; }
   .view:not([hidden]) { animation: fade-in .16s ease-out; }
+  .tabs.anim::before { transition: transform .28s cubic-bezier(.2, .8, .2, 1); }      /* 分頁列的圓底滑到新選的那一格（一開始那一次不滑：.anim 是第一次換分頁才加的） */
+  .tabs button { transition: color .18s ease-out; }
+  .tabs button svg { transition: transform .12s ease-out; }
+  .tabs button:active svg { transform: scale(.78); transition-duration: .09s; }      /* 按下去很快縮下去；放開後由程式彈回來（app.js 的 springTab） */
   @keyframes breathe { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent); } }
   .rt.near { animation: breathe 2.2s ease-in-out infinite; }      /* 一分鐘內到的那一列 */
 }

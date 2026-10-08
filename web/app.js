@@ -47,7 +47,7 @@ function startApp() {
   // 動態：只在「畫面剛變了」的時候動一下，讓人看得出變了什麼。系統設成減少動態效果、或頁面不在前景時都不動。
   const canMove = () => !REDUCED_MOTION && !document.hidden && typeof Element.prototype.animate === "function";
   const EASE = "cubic-bezier(.2, .8, .2, 1)";
-  const motion = { slides: 0, flips: 0, fades: 0, strip: 0, pulses: 0 };      // 各做了幾次（除錯用）
+  const motion = { slides: 0, flips: 0, fades: 0, strip: 0, pulses: 0, tabs: 0 };      // 各做了幾次（除錯用）
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const fmt = (ms) => (ms == null || !Number.isFinite(ms) ? "--:--" : C.fmtTime(ms));
   const ls = {
@@ -1506,10 +1506,35 @@ function startApp() {
     rdirBy[g.family] = g.dir; ls.set("bus:rdir", rdirBy);
     fillGroupSelects(); compute(); render();
   }
+  let litTab = null;                                            // 底下亮著的是哪一顆分頁（還沒設過是 null）
+  /** 分頁的圖示彈一下：從按下去那麼小開始、彈過頭、來回兩下停在原位（使用者 2026-10-09 要「按下去有彈力」）。 */
+  function springTab(btn) {
+    if (!canMove()) return;
+    btn.querySelector("svg").animate([{ transform: "scale(.78)", easing: "ease-out" }, { transform: "scale(1.2)", offset: .4, easing: "ease-in-out" },
+      { transform: "scale(.93)", offset: .66, easing: "ease-in-out" }, { transform: "scale(1.04)", offset: .85, easing: "ease-in-out" }, { transform: "scale(1)" }], { duration: 480 });
+    motion.tabs++;
+  }
+  /** 底下的分頁列換了亮的那一顆：手機版的圓底滑過去（位置交給 CSS 依 --tab-i 算）、到位時像果凍一樣晃一下，剛選中的圖示彈一下。一開始那一次不動。 */
+  function lightTab(btns, on) {
+    const nav = on.parentNode;
+    if (litTab && on !== litTab) {
+      nav.classList.add("anim");
+      springTab(on);
+      if (canMove()) {      // 圓底：滑的時候拉長壓扁，到位後回彈（超出分頁列邊的部分由 CSS 裁掉）
+        const a = nav.animate([{ scale: "1 1", easing: "ease-out" }, { scale: "1.12 .86", offset: .3, easing: "ease-in-out" },
+          { scale: ".95 1.06", offset: .58, easing: "ease-in-out" }, { scale: "1.03 .98", offset: .8, easing: "ease-in-out" }, { scale: "1 1" }], { duration: 520, pseudoElement: "::before" });
+        if (a.effect.pseudoElement !== "::before") a.cancel();      // 不認得 pseudoElement 的舊瀏覽器會變成整條分頁列在晃：取消
+      }
+    }
+    nav.style.setProperty("--tab-i", btns.indexOf(on)); nav.classList.add("lit");
+    litTab = on;
+  }
   function setTab(t) {
     state.tab = t;
     const lit = t === "marey" ? "route" : t;                    // 時距圖是從「路線」點進去的，底下亮的是路線
-    for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === lit));
+    const btns = [...document.querySelectorAll(".tabs button")], on = btns.find((b) => b.dataset.tab === lit);
+    for (const b of btns) b.setAttribute("aria-selected", String(b === on));
+    if (on) lightTab(btns, on);
     for (const id of TABS) $(`#view-${id}`).hidden = id !== t;
     if (t !== "wait") { state.pick = false; state.posMenu = false; $("#picker").hidden = true; }
     if (t === "route") lastStripSig = "";                       // 每次進路線頁：先看到這個地點的那一站
@@ -1574,7 +1599,9 @@ function startApp() {
   // ---------------------------------------------------------------- 互動
   document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
     if (b.dataset.tab === "find") state.routePage = null;         // 按分頁＝回到找公車的首頁
+    const same = b === litTab;
     setTab(b.dataset.tab);
+    if (same) springTab(b);                                       // 按的是本來就亮著的那一顆：圖示一樣彈一下
   }));
   $("#mareyBtn").addEventListener("click", () => setTab("marey"));
   $("#mareyBack").addEventListener("click", () => setTab("route"));
