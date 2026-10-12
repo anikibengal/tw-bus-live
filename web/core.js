@@ -377,14 +377,43 @@
    * all＝要不要多一顆「全部」（這個站關注的路線不分位置列在一起）：有關注路線的位置不只一個，或使用者在這個站選過「全部」（allSel）。
    *   使用者 2026-10-05：能搭的三條車停在兩根站牌，要來回切很麻煩。有「全部」時分頁最多再放兩顆位置（加上「選路線」只排得下三顆），
    *   所以三個位置也改成「全部＋第一個有關注的＋其他」。
-   * pos＝positions 的結果；watched＝有關注路線的位置編號。回傳 { mode, all, tabs: [位置…], rest: [位置…] }。
+   * trip＝這個站的「目的地」那一格（出門／回家／去哪；使用者 2026-10-12：不知道要站哪一邊）。"set"＝已經有目的地，"offer"＝還沒有、可以設。
+   *   回傳的 trip："tab"＝排在最前面的一顆分頁，"menu"＝收在「其他」或選單的第一項，""＝沒有。
+   *   分頁那一排連它最多四顆（原本最多三顆），四顆時每顆只放得下 3 個字（往東、往西北），所以：
+   *   set   原本就是分頁、標籤又都在 3 個字以內：多一顆排在最前面；不然改成「它＋全部＋其他」（只有一個位置有關注時是「它＋那個位置＋其他」）
+   *         ——已經設了的一定是一顆分頁。
+   *   offer 原本的排法不動：原本就是分頁、標籤都在 3 個字以內才多一顆；原本有「其他」或選單的放進去當第一項；其餘（分頁、標籤是月台名）不出。
+   * pos＝positions 的結果；watched＝有關注路線的位置編號。回傳 { mode, all, trip, tabs: [位置…], rest: [位置…] }。
    */
-  function positionBar(pos, watched, allSel) {
+  function positionBar(pos, watched, allSel, trip) {
     const short = (p) => p.label.length <= 5, w = pos.filter((p) => watched.includes(p.id));
     const all = pos.length > 1 && (w.length > 1 || !!allSel);
-    const mode = pos.length <= 1 ? "plain" : pos.length <= (all ? 2 : 3) && pos.every(short) ? "tabs" : w.length && short(w[0]) ? "more" : "drop";
-    const tabs = mode === "tabs" ? pos : mode === "more" ? w.slice(0, 1) : [];
-    return { mode, all, tabs, rest: mode === "more" || mode === "drop" ? pos.filter((p) => !tabs.includes(p)) : [] };
+    const base = pos.length <= 1 ? "plain" : pos.length <= (all ? 2 : 3) && pos.every(short) ? "tabs" : w.length && short(w[0]) ? "more" : "drop";
+    const four = base === "tabs" && pos.every((p) => p.label.length <= 3);      // 原本就是分頁（最多三顆）、標籤又都在 3 個字以內：再多一顆排得下
+    const at = base === "plain" || !trip ? "" : trip === "set" || four ? "tab" : base === "tabs" ? "" : "menu";
+    const mode = at === "tab" && !four ? "more" : base;
+    const tabs = mode === "tabs" ? pos : mode === "more" && !(at === "tab" && all) && w.length && short(w[0]) ? w.slice(0, 1) : [];
+    return { mode, all, trip: at, tabs, rest: mode === "more" || mode === "drop" ? pos.filter((p) => !tabs.includes(p)) : [] };
+  }
+  /**
+   * 從這條路線的第 from 站上車，之後最先到的目的地站。dest＝目的地的站牌編號（Set）；keyOf＝一站的站牌編號怎麼取（預設 station）。
+   * 回傳 { n（隔幾站：下一站就是 1）, si（第幾站）, name } 或 null（之後不會到）。上車那一站自己不算；
+   * 只看「之後」的站：反方向經過、或上車之前就過了的不算（板橋公車站第三月台的 307 之後還有十站，但到不了國泰街口）。
+   */
+  function reachStops(stops, from, dest, keyOf) {
+    const key = keyOf || ((s) => String(s.station));
+    for (let i = from + 1; i < stops.length; i++) if (dest.has(key(stops[i]))) return { n: i - from, si: i, name: stops[i].name };
+    return null;
+  }
+  /**
+   * 一列（一條路線的一個方向）有幾個變體到得了目的地時，那一行字寫哪個目的地、隔幾站。
+   * hits＝每個到得了的變體一筆 { d（第幾個目的地）, n（隔幾站）}。回傳 { d, n }：d 取最快到的那一筆的（一樣快取排前面的目的地）；
+   * n 只有每個變體的目的地和站數都一樣才給，不然是 null（繞駛的變體站數不同，寫一個數字會寫錯）。沒有任何一筆回傳 null。
+   */
+  function reachSummary(hits) {
+    if (!hits || !hits.length) return null;
+    const best = hits.reduce((a, b) => (b.n < a.n || (b.n === a.n && b.d < a.d) ? b : a));
+    return { d: best.d, n: hits.every((h) => h.d === best.d && h.n === best.n) ? best.n : null };
   }
   /** 關注的單位：一條路線的一個方向（同方向的繞駛、區間變體算同一個）。鍵＝「來源:主路線編號|方向」，和全市索引對得上。 */
   function unitKey(v) { return `${v.src || "tpe"}:${v.routeId}|${v.direction}`; }
@@ -1148,7 +1177,7 @@
 
   return { P, tpeParts, serviceDay, hhmmToMin, fmtTime, parseTpe, prepLine, project, parseBlobJson, indexEta, mergeEta, officialNext,
            distM, nearestPlatforms, nearestStops, searchRoutes, searchStops, splitStopName, stopGroups,
-           compass8, headingDiff, bayNo, positions, positionBar, unitKey, carryOver, arrivalOrder, splitRouteName, pickColor, routeColors, rememberColors, helperRoutes, routeCompare,
+           compass8, headingDiff, bayNo, positions, positionBar, reachStops, reachSummary, unitKey, carryOver, arrivalOrder, splitRouteName, pickColor, routeColors, rememberColors, helperRoutes, routeCompare,
            tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, paceUpdate, paceNow, paceState, travelMin, roadAhead, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
            calibGroup, isApprox, carKind, speedLabel, flapCells, earliestMs, upcomingForBus, rideEstimate, tweenKm, planTween };
 });

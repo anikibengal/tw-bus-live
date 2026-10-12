@@ -5,6 +5,7 @@
  *   data/city-index.json   全市路線與站牌索引：站牌上有哪些路線、站牌的行車方位、搜尋、附近的站
  * 關注的單位是（地點、路線、方向）：每個地點各自記要看哪些路線往哪個方向，等車頁與地圖只列那幾條。
  * 一個地點的站牌分成幾個「候車位置」（馬路的這一側、那一側、第幾月台）；等車頁一次看一個位置，每個地點記住上次看的是哪一個。
+ * 一個地點可以設「目的地」（別的站）：候車位置那一排最前面多一格（出門／回家／目的地），選它就只列到得了的車、寫明站哪一邊。
  * 網址參數：?tab=wait|map|find|route|marey  初始分頁（手機預設等車、桌機預設地圖；時距圖沒有自己的分頁，從「路線」點進去）
  *
  * 每台車各一列、前方路況只講一次、資料年齡、暫停更新，這些做法來自 tw-bus。
@@ -184,7 +185,7 @@ function startApp() {
       SIB = C.stopGroups(d.plats);
       mergeSiblingStops();
     } catch (e) { state.cityNote = "全市路線與站牌資料讀不到（" + e.message + "），只能看已經載入的路線"; }
-    polesCache.clear(); posCache.clear();
+    polesCache.clear(); posCache.clear(); destCache.clear();
     render();
     ensureHelpers();
   }
@@ -242,10 +243,64 @@ function startApp() {
   let posSel = ls.get("bus:pos", {});                   // 地點 → 上次看的候車位置（那個位置第一根站牌的編號；ALL＝「全部」）
   if (!posSel || typeof posSel !== "object" || Array.isArray(posSel)) posSel = {};
   const ALL = "*";                                      // 「全部」：這個站關注的路線不分候車位置列在一起
+  const TRIP = "@";                                     // 「目的地」那一格：只列到得了目的地的車，不分候車位置
   function setPos(placeId, posId) {
     if (posSel[placeId] === posId) return;
     posSel[placeId] = posId;
     ls.set("bus:pos", posSel);
+  }
+  // 目的地（使用者 2026-10-12：一直不知道要站哪一邊——國泰街口要去板橋車站，不知道是往東還是往西）。
+  // 一個地點可以設幾個目的地（別的站名）。常用的兩個地點寫死：出門＝國泰街口往板橋車站或後站商圈，回家＝板橋車站往國泰街口；
+  // 在「去哪」面板改過就照改的（存在這台裝置的瀏覽器裡），沒改過用這裡寫的。label＝畫面上怎麼稱呼那個目的地（他說的是板橋車站）。
+  const TRIP_PRESET = {
+    "cfg:國泰街口": { label: "出門", to: [{ name: "新北板橋公車站", label: "板橋車站" }, { name: "後站商圈" }] },
+    "cfg:板橋公車站": { label: "回家", to: [{ name: "國泰街口" }] },
+  };
+  let trips = ls.get("bus:trip", {});                   // 地點 → [{ name, label }…]（使用者改過的才有）
+  if (!trips || typeof trips !== "object" || Array.isArray(trips)) trips = {};
+  if (!ls.get("bus:tripInit", false)) {                 // 第一次有這個功能：寫死的那兩個地點先看「出門／回家」（原本記的可能是反方向那一側）
+    for (const id of Object.keys(TRIP_PRESET)) posSel[id] = TRIP;
+    ls.set("bus:pos", posSel); ls.set("bus:tripInit", true);
+  }
+  /** 這個地點的目的地與那一格的名字：沒有目的地叫「去哪」，寫死的照寫死的叫，其餘叫「目的地」。 */
+  function tripOf(pl) {
+    const pre = TRIP_PRESET[pl.id], mine = trips[pl.id];
+    const to = (Array.isArray(mine) ? mine : pre ? pre.to : []).filter((d) => d && d.name);
+    return { to, label: !to.length ? "去哪" : pre ? pre.label : "目的地", preset: !!pre };
+  }
+  const destCache = new Map();
+  /**
+   * 一個目的地的站牌：那個站名、和它合成同一個地點的站名；它是常用地點的話就是那個地點全部的站名。
+   * 回傳 { name, label, names, ids（站牌編號）, routes（有停這些站牌的路線鍵：用來先篩掉根本不停的路線）}。全市索引載入後才有內容。
+   */
+  function destOf(d) {
+    const ck = d.name + "|" + (d.label || "");
+    if (destCache.has(ck)) return destCache.get(ck);
+    const cfg = A.places.find((p) => namesOf(p).includes(d.name));
+    const names = cfg ? namesOf(cfg) : sibNames(d.name), ids = new Set(), routes = new Set();
+    for (const p of CITY ? CITY.plats : []) if (names.includes(p[1])) { ids.add(String(p[0])); for (const e of p[4]) routes.add(CITY.routes[e[0]][0]); }
+    const out = { name: d.name, label: d.label || (cfg ? cfg.name : sibLabel(d.name)), names, ids, routes };
+    if (CITY) destCache.set(ck, out);
+    return out;
+  }
+  /**
+   * 從這根站牌搭這條（路線、方向）到不到得了目的地：到得了的變體各一筆（變體鍵 → { d 第幾個目的地, n 隔幾站 }），都到不了是空的。
+   * 判定只看「這根站牌之後的站序」（core.reachStops）。路線還沒載入就看它的資料檔（「去哪」面板要列還沒關注的路線）；
+   * 資料檔也還沒讀到回傳 null＝還不知道。dests 的 own＝目的地的站牌編號（不含這個地點自己的站牌）。
+   */
+  function itemReach(it, dests) {
+    const vs = unitsOf.get(it.unit) || (routeFiles.has(it.routeKey) ? routeFiles.get(it.routeKey).variants.filter((v) => C.unitKey(v) === it.unit) : null);
+    if (!vs) return loaded.has(it.routeKey) ? new Map() : null;
+    const out = new Map();
+    for (const v of vs) {
+      const hits = [];
+      v.stops.forEach((s, si) => {
+        if (stKey(s) !== it.pole.id || si >= v.stops.length - 1) return;
+        dests.forEach((d, di) => { const r = C.reachStops(v.stops, si, d.own, stKey); if (r) hits.push({ d: di, n: r.n }); });
+      });
+      if (hits.length) out.set(v.key, hits.reduce((a, b) => (b.n < a.n || (b.n === a.n && b.d < a.d) ? b : a)));
+    }
+    return out;
   }
   /** 設定檔裡一個常用地點包含的站名：自己列的，加上和它們合成同一個地點的（站名只差括號）。 */
   const namesOf = (p) => [...new Set((p.match && p.match.length ? p.match : [p.name]).flatMap(sibNames))];
@@ -343,8 +398,10 @@ function startApp() {
   }
   /**
    * 一個地點的畫面資料：全部的候車位置、那一排怎麼排、現在看的是哪一個、它關注的路線各一列。
-   * 現在看哪一個：記住的那一個 → 第一個有關注路線的 → 離你最近的（有定位時）→ 第一個。
+   * 現在看哪一個：記住的那一個 → 第一個有關注路線的 → 離你最近的（有定位時）→ 第一個。這個地點有目的地、還沒記過看哪一個時先看「目的地」。
    * 記住的是「全部」時，cur 是湊出來的一個位置（all: true）：列是每個有關注路線的位置的列接起來（照位置的固定順序），每一列帶著它自己的位置（at）。
+   * 記住的是「目的地」時也是湊出來的（trip: true）：只留到得了目的地的列，每一列只留到得了的那幾個變體的車，另外帶著到哪裡、隔幾站（reach）。
+   *   到不了的沒有刪，在「全部」與各個位置底下照舊。tripKeys＝到得了的變體（地圖只畫它們）。
    */
   function placeView(pl) {
     const poles = placePoles(pl), wk = watch[pl.id] || [];
@@ -357,24 +414,44 @@ function startApp() {
     });
     const withRows = pos.filter((x) => x.watched.length);
     const dist = (x) => Math.min(...x.poles.map((p) => distM(state.me, p)));
-    const bar = C.positionBar(pos, withRows.map((x) => x.id), posSel[pl.id] === ALL);
-    let cur;
-    if (bar.all && posSel[pl.id] === ALL) {
-      const once = (key) => { const seen = new Set(); return (x) => !seen.has(key(x)) && seen.add(key(x)); };      // 同一條路線停兩個位置：算前面那一個
+    const trip = tripOf(pl), mine = new Set(poles.map((p) => p.id));
+    const dests = trip.to.map((d) => { const x = destOf(d); return { ...x, own: new Set([...x.ids].filter((id) => !mine.has(id))) }; });
+    const bar = C.positionBar(pos, withRows.map((x) => x.id), posSel[pl.id] === ALL, !CITY ? "" : dests.length ? "set" : "offer");
+    const sel = posSel[pl.id] === undefined && bar.trip === "tab" && dests.length ? TRIP : posSel[pl.id];
+    const once = (key) => { const seen = new Set(); return (x) => !seen.has(key(x)) && seen.add(key(x)); };      // 同一條路線停兩個位置：算前面那一個
+    let cur, tripKeys = null;
+    if (sel === TRIP && bar.trip === "tab" && dests.length) {
+      tripKeys = new Set();
+      const rows = withRows.flatMap((x) => x.rows.map((r) => ({ ...r, at: x }))).map((r) => {
+        const hit = itemReach(r.it, dests), sum = hit && C.reachSummary([...hit.values()]);
+        if (!sum) return null;
+        for (const k of hit.keys()) tripKeys.add(k);
+        return { ...r, arr: r.arr.filter((a) => a.v && hit.has(a.v.key)), reach: { n: sum.n, label: dests[sum.d].label } };
+      }).filter(Boolean).filter(once((r) => r.it.unit));
+      cur = { id: TRIP, trip: true, all: true, label: trip.label, long: trip.label, addr: "", poles: [...new Set(rows.map((r) => r.at))].flatMap((x) => x.poles),
+              items: pos.flatMap((x) => x.items).filter(once((it) => it.unit)), watched: rows.map((r) => r.it), rows };
+    } else if (bar.all && sel === ALL) {
       const rows = withRows.flatMap((x) => x.rows.map((r) => ({ ...r, at: x }))).filter(once((r) => r.it.unit));
       cur = { id: ALL, all: true, label: "全部", long: "全部", addr: "", poles: withRows.flatMap((x) => x.poles),
               items: pos.flatMap((x) => x.items).filter(once((it) => it.unit)), watched: rows.map((r) => r.it), rows };
     } else {
-      cur = pos.find((x) => x.id === posSel[pl.id]) || withRows[0] ||
+      cur = pos.find((x) => x.id === sel) || withRows[0] ||
         (state.me ? [...pos].sort((a, b) => dist(a) - dist(b))[0] : pos[0]) || null;
     }
-    // 地圖底下的清單：現在看的位置排最前面，其餘有關注路線的位置接在後面（「全部」：每個位置一段，照固定順序）
-    const secs = !cur ? [] : cur.all ? withRows : [cur, ...withRows.filter((x) => x !== cur)].filter((x) => x.watched.length);
-    return { poles, pos, bar, cur, rows: cur ? cur.rows : [], secs, watched: pos.flatMap((x) => x.watched) };
+    // 地圖底下的清單跟著現在看的那一格：某個位置或目的地就只有那一段；「全部」是每個位置一段（照固定順序）
+    const secs = !cur ? [] : cur.all && !cur.trip ? withRows : [cur].filter((x) => x.watched.length);
+    return { poles, pos, bar, cur, rows: cur ? cur.rows : [], secs, watched: pos.flatMap((x) => x.watched), trip, dests, tripKeys };
   }
-  /** 目前地點關注中的單位（地圖只畫這幾條）。 */
-  const shownUnits = () => new Set((state.place && watch[state.place]) || []);
-  const isShown = (v) => shownUnits().has(C.unitKey(v));
+  /**
+   * 地圖畫哪些路線與車：跟著等車頁現在看的那一格——全部、某個候車位置、或目的地（只畫到得了的變體）。
+   * 原本不管看哪一格都畫這個地點全部關注的，兩個方向的車混在一起（使用者 2026-10-12：不知道要看哪一邊）。那一格沒有列時照舊畫全部關注的。
+   */
+  function shownOf(pv, pl) {
+    const some = !!(pv && pv.rows.length), units = new Set(some ? pv.rows.map((r) => r.it.unit) : (pl && watch[pl.id]) || []);
+    const keys = some && pv.cur.trip ? pv.tripKeys : null;
+    return (v) => units.has(C.unitKey(v)) && (!keys || keys.has(v.key));
+  }
+  const shownNow = () => { const pl = currentPlace(); return shownOf(pl ? placeView(pl) : null, pl); };
   /** 所有地點關注到的路線都載進來（啟動時、關注有變時）。 */
   function ensureWatchedRoutes() {
     for (const us of Object.values(watch)) for (const u of us) ensureRoute(u.split("|")[0]);
@@ -634,7 +711,9 @@ function startApp() {
     return `<div class="rt-more">${body}<div class="rt-acts">${last ? `<span class="rt-last">起站末班 ${last}</span>` : ""}` +
       `<button type="button" class="btn" data-unwatch="${esc(r.it.unit)}">不再關注</button></div></div>`;
   }
-  /** 一條關注的路線一列：下一班幾分（大字）、往哪裡、再來兩班。點了展開看每一台車。「全部」時往哪裡那一行改放在最下面、前面寫在哪裡等（r.at）。 */
+  /** 「目的地」那一格的每一列寫的那句：隔幾站到哪裡（變體的站數不一樣時只寫到哪裡）。 */
+  const reachText = (x) => (x.n != null ? `${x.n} 站到 ${x.label}` : `到 ${x.label}`);
+  /** 一條關注的路線一列：下一班幾分（大字）、往哪裡、再來兩班。點了展開看每一台車。「全部」時往哪裡那一行改放在最下面、前面寫在哪裡等（r.at）；「目的地」時那一行寫隔幾站到哪裡（r.reach）。 */
   function routeRowHTML(r, now, hot) {
     const a = r.arr[0], big = bigOf(a, now), early = a ? earliestText(a, now) : "";
     const later = r.arr.slice(1).filter((x) => !x.upper && x.ms - now <= 90 * 60e3).slice(0, 2).map((x) => Math.max(1, Math.round((x.ms - now) / 60e3)));
@@ -649,7 +728,7 @@ function startApp() {
       `<span class="rt-id">${badgeHTML(r.label, r.col)}${r.at ? "" : `<span class="rt-to">往 ${esc(r.toward)}</span>`}</span>` +
       `<span class="rt-eta"><span class="big${big.soon ? " soon" : ""}"${a ? ` title="${esc(srcTitle(a.source))}"` : ""}>${big.about ? "<small>約</small>" : ""}<span class="num" data-num="${esc(big.num)}">${esc(big.num)}</span>${big.unit ? `<small>${big.unit}</small>` : ""}</span><span class="rt-sub">${sub}</span></span>` +
       `<span class="rt-later"><small>再來</small><b>${later.length ? later.join("、") + " 分" : "—"}</b></span>` +
-      (r.at ? `<span class="rt-where">${esc(r.at.label)}・往 ${esc(r.toward)}</span>` : "") + `</button>` +
+      (r.at ? `<span class="rt-where">${esc(r.at.label)}・${r.reach ? esc(reachText(r.reach)) : "往 " + esc(r.toward)}</span>` : "") + `</button>` +
       (open ? rowDetailHTML(r, now) : "") + `</article>`;
   }
   const CHEV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
@@ -657,27 +736,82 @@ function startApp() {
    * 候車位置那一排：左邊是位置（文字、分頁、或選單，規則見 core.positionBar），最右邊一顆「選路線」。
    * 位置的順序固定，不隨關注變動；「其他」與選單打開的是同一份清單，有關注路線的位置前面有一個點。
    * 有關注路線的位置不只一個時最前面多一顆「全部」（分頁時是第一顆，整個用選單時是選單的第一項）。
+   * 「目的地」那一格排在最前面（出門／回家／目的地；還沒設過叫「去哪」，排不下時是「其他」或選單的第一項）。
    */
+  const tripTabHTML = (pv) => `<button type="button" data-pos="${TRIP}" aria-pressed="${!!pv.cur.trip}" aria-label="${pv.dests.length ? "只看到得了目的地的車：" + esc(pv.dests.map((d) => d.label).join("、")) : "輸入目的地，看要站哪一邊"}">${esc(pv.trip.label)}</button>`;
+  const allTabHTML = (pv) => `<button type="button" data-pos="${ALL}" aria-pressed="${pv.cur.id === ALL}" aria-label="這個站關注的路線全部列出來">全部</button>`;
+  const posTabHTML = (x, cur) => `<button type="button" data-pos="${esc(x.id)}" aria-pressed="${x === cur}" aria-label="候車位置 ${esc(x.long)}">${esc(x.label)}</button>`;
   function posRowHTML(pv) {
     const { bar, cur } = pv, inRest = bar.rest.includes(cur);
-    const allTab = bar.all ? `<button type="button" data-pos="${ALL}" aria-pressed="${!!cur.all}" aria-label="這個站關注的路線全部列出來">全部</button>` : "";
-    const allItem = bar.all && bar.mode === "drop" ? `<button type="button" role="menuitemradio" aria-checked="${!!cur.all}" data-pos="${ALL}"><i class="on"></i><span>全部</span><small>${pv.watched.length} 條</small></button>` : "";
+    const allItem = bar.all && bar.mode === "drop" ? `<button type="button" role="menuitemradio" aria-checked="${cur.id === ALL}" data-pos="${ALL}"><i class="on"></i><span>全部</span><small>${pv.watched.length} 條</small></button>` : "";
+    const tripItem = bar.trip === "menu" ? `<button type="button" role="menuitem" data-pos="${TRIP}"><i></i><span>去哪</span><small>輸入目的地</small></button>` : "";
     let left;
     if (bar.mode === "plain") left = `<div class="posplain">${esc(cur.long)}</div>`;
     else if (bar.mode === "drop") left = `<button type="button" class="posdrop" data-pos-menu aria-expanded="${state.posMenu}" aria-label="換候車位置"><span>${esc(cur.long)}</span>${CHEV_SVG}</button>`;
-    else left = `<div class="seg dirs postabs" role="group" aria-label="候車位置">` + allTab +
-      bar.tabs.map((x) => `<button type="button" data-pos="${esc(x.id)}" aria-pressed="${x === cur}" aria-label="候車位置 ${esc(x.long)}">${esc(x.label)}</button>`).join("") +
+    else left = `<div class="seg dirs postabs" role="group" aria-label="候車位置">` + (bar.trip === "tab" ? tripTabHTML(pv) : "") + (bar.all ? allTabHTML(pv) : "") +
+      bar.tabs.map((x) => posTabHTML(x, cur)).join("") +
       (bar.mode === "more" ? `<button type="button" data-pos-menu aria-pressed="${inRest}" aria-expanded="${state.posMenu}" aria-label="其他候車位置">${esc(inRest ? cur.label : "其他")}<i class="caret"></i></button>` : "") + `</div>`;
-    const menu = state.posMenu && bar.rest.length ? `<div class="posmenu" role="menu">` + allItem + bar.rest.map((x) =>
+    const menu = state.posMenu && bar.rest.length ? `<div class="posmenu" role="menu">` + allItem + tripItem + bar.rest.map((x) =>
       `<button type="button" role="menuitemradio" aria-checked="${x === cur}" data-pos="${esc(x.id)}"><i${x.watched.length ? ' class="on"' : ""}></i><span>${esc(x.long)}</span><small>${x.items.length} 條</small></button>`).join("") + `</div>` : "";
     return left + `<button type="button" class="pickbtn" data-pick-open><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7M18 4v4M15 16v4"/></svg>選路線</button>` + menu;
   }
   /** 「選路線」面板：只列現在這個候車位置停的路線（「全部」時是這個站每個位置的），順序固定（照路線號碼），每列一顆關注開關；沒關注的只列官方的下一班。 */
+  /** 面板裡一條路線那一列右邊的到站：已關注而且載入了的寫算出來的下一班，其餘寫官方的下一班。 */
+  function pickEtaHTML(it, info, on, now) {
+    if (on && info.entries.length) {
+      const a = itemArrivals(it, info)[0];
+      return a ? `<span class="eta${etaText(a, now).soon ? " soon" : ""}">${etaText(a, now).text}</span>` : `<span class="eta off">${esc(idleText(it))}</span>`;
+    }
+    const n = C.officialNext(state.eta, it.routeId, it.stopId, it.dir);
+    return n && n.ms != null ? `<span class="eta${etaText({ ms: n.ms }, now).soon ? " soon" : ""}">${etaText({ ms: n.ms }, now).text}${n.onLeg ? "" : "<small>未發車</small>"}</span>`
+                             : `<span class="eta off">${(n && CODE_TEXT[n.code]) || "沒有資料"}</span>`;
+  }
+  const watchBtnHTML = (it, info, on) => `<button type="button" class="wbtn" data-watch="${esc(it.unit)}" aria-pressed="${on}" aria-label="${on ? "取消關注" : "關注"} ${esc(info.label)} 往${esc(info.toward)}">${on ? "已關注" : "關注"}</button>`;
+  const tripPeek = new Map();          // 「去哪」面板為了查站序去讀的路線資料檔（一條只讀一次）
+  /**
+   * 「去哪」面板（設定這個地點的目的地）：上面打站名找目的地；下面每個目的地一段，寫站哪一邊、哪幾條到得了、隔幾站，每條一顆關注開關。
+   * 列的是這個站每個候車位置停的全部路線裡到得了的，不只已經關注的（所以要讀還沒載入的路線的資料檔；只讀「目的地也有停」的那幾條）。
+   */
+  function renderTripPick(pv, pl, now) {
+    const q = state.filter.trim(), flt = $("#flt"), wk = watch[pl.id] || [];
+    $("#pickTitle").textContent = `從 ${pl.name} 去哪`;
+    $("#pickSub").textContent = "";
+    $("#fltRow").hidden = false;
+    flt.placeholder = "站名"; flt.setAttribute("aria-label", "要去的站名");
+    const destHTML = (d) => {
+      let wait = false;
+      const segs = pv.pos.map((x) => {
+        const rows = [];
+        for (const it of x.items) {
+          if (!d.routes.has(it.routeKey)) continue;                 // 這條路線根本不停目的地：不用查站序
+          const hit = itemReach(it, [d]), sum = hit && C.reachSummary([...hit.values()]);
+          if (!hit) { wait = true; if (!tripPeek.has(it.routeKey)) tripPeek.set(it.routeKey, fetchRoute(it.routeKey).then(() => render(), () => {})); }
+          if (sum) rows.push({ it, info: itemInfo(it), n: sum.n });
+        }
+        return { x, rows: rows.sort((a, b) => C.routeCompare(a.info.label, b.info.label)) };
+      }).filter((g) => g.rows.length);
+      return `<h3 class="all-g dest-h"><span>去 ${esc(d.label)}</span><button type="button" class="link" data-dest-del="${esc(d.name)}">移除</button></h3>` +
+        (segs.map(({ x, rows }) => `<div class="dest-at"><small>站這一邊</small><b>${esc(x.label)}</b>${!x.bay && x.addr && x.addr !== x.label ? `<span>${esc(x.addr)}</span>` : ""}</div>` +
+          rows.map(({ it, info, n }) => { const on = wk.includes(it.unit); return `<div class="all-row">${badgeHTML(info.label, info.col, "sm")}<span class="to">${n != null ? n + " 站" : "到得了"}</span>${pickEtaHTML(it, info, on, now)}${watchBtnHTML(it, info, on)}</div>`; }).join("")).join("") ||
+          `<p class="empty">${wait ? "查詢中…" : "從這個站沒有直達的公車"}</p>`);
+    };
+    let html;
+    if (q) {
+      const had = new Set(pv.dests.flatMap((d) => d.names));
+      const ss = CITY ? C.searchStops(CITY.plats, q, 8, SIB).filter((x) => !sibNames(x.name).some((n) => pl.names.includes(n))) : [];
+      html = ss.map((x) => `<button type="button" class="pick" data-dest="${esc(x.name)}"><span><b>${esc(x.label)}</b></span><em>${sibNames(x.name).some((n) => had.has(n)) ? "已加入" : "加入"}</em></button>`).join("") ||
+        `<p class="empty">找不到「${esc(q)}」這個站名</p>`;
+    } else html = pv.dests.map(destHTML).join("") || `<p class="empty">打要去的站名：會列出站哪一邊、哪幾條到得了</p>`;
+    setHTML("#pickList", html);
+    setHTML("#pickFoot", pv.trip.preset && trips[pl.id] ? `<button type="button" class="link" data-dest-reset>還原成原本的目的地</button>` : "");
+  }
   function renderPick(pv, pl, now) {
     const box = $("#picker"), cur = pv.cur;
     showPicker(!!(state.pick && cur));
     if (box.hidden || box.classList.contains("out")) return;
+    if (state.pick === "trip") return renderTripPick(pv, pl, now);
     const wk = watch[pl.id] || [], items = cur.items;
+    $("#flt").placeholder = "路線號碼"; $("#flt").setAttribute("aria-label", "路線號碼");
     $("#pickTitle").textContent = pl.name;
     $("#pickSub").textContent = (pv.pos.length > 1 || cur.addr ? cur.long + "・" : "") + items.length + " 條";
     $("#fltRow").hidden = items.length <= 8;
@@ -689,17 +823,7 @@ function startApp() {
     const elsewhere = rows.length || !f ? [] : pv.pos.filter((x) => x !== cur && x.items.some(hit));
     setHTML("#pickList", rows.map(({ it, info }) => {
       const on = wk.includes(it.unit);
-      let eta;
-      if (on && info.entries.length) {
-        const a = itemArrivals(it, info)[0];
-        eta = a ? `<span class="eta${etaText(a, now).soon ? " soon" : ""}">${etaText(a, now).text}</span>` : `<span class="eta off">${esc(idleText(it))}</span>`;
-      } else {
-        const n = C.officialNext(state.eta, it.routeId, it.stopId, it.dir);
-        eta = n && n.ms != null ? `<span class="eta${etaText({ ms: n.ms }, now).soon ? " soon" : ""}">${etaText({ ms: n.ms }, now).text}${n.onLeg ? "" : "<small>未發車</small>"}</span>`
-                                : `<span class="eta off">${(n && CODE_TEXT[n.code]) || "沒有資料"}</span>`;
-      }
-      return `<div class="all-row">${badgeHTML(info.label, info.col, "sm")}<span class="to">往 ${esc(info.toward)}</span>${eta}` +
-        `<button type="button" class="wbtn" data-watch="${esc(it.unit)}" aria-pressed="${on}" aria-label="${on ? "取消關注" : "關注"} ${esc(info.label)} 往${esc(info.toward)}">${on ? "已關注" : "關注"}</button></div>`;
+      return `<div class="all-row">${badgeHTML(info.label, info.col, "sm")}<span class="to">往 ${esc(info.toward)}</span>${pickEtaHTML(it, info, on, now)}${watchBtnHTML(it, info, on)}</div>`;
     }).join("") || `<p class="empty">${elsewhere.length ? "這個位置沒有，在：" : "沒有符合的路線"}</p>` + elsewhere.map((x) =>
       `<button type="button" class="pick" data-pos="${esc(x.id)}"><span><b>${esc(x.long)}</b></span><em>${x.items.filter(hit).length} 條 ›</em></button>`).join(""));
     setHTML("#pickFoot", !pl.fixed && !pl.temp ? `<button type="button" class="link" data-unsave="${esc(pl.key)}">把「${esc(pl.name)}」從常用站移除</button>` : "");
@@ -713,13 +837,46 @@ function startApp() {
     box.classList.add("out");
     setTimeout(() => { if (box.classList.contains("out")) { box.hidden = true; box.classList.remove("out"); } }, 190);
   }
-  function openPick() {
+  /** 打開面板。kind＝"trip" 是「去哪」（設定目的地）；沒給的話，正在看「目的地」那一格時也是它，其餘是選路線。 */
+  function openPick(kind) {
     const pl = currentPlace(), pv = pl && placeView(pl);
     if (!pv || !pv.cur) return;
     setPos(pl.id, pv.cur.id);                             // 面板開著時關注的變動不會讓「現在看的位置」換掉
-    state.pick = true; state.posMenu = false; state.filter = ""; $("#flt").value = "";
+    state.pick = kind === "trip" || pv.cur.trip ? "trip" : true; state.posMenu = false; state.filter = ""; $("#flt").value = "";
     render();
     $("#pickList").scrollTop = 0;
+  }
+  /** 點了「目的地」那一格：還沒設過、或已經選著它再點一次 → 打開「去哪」面板；不然切過去。 */
+  function pickTrip(again) {
+    const pl = currentPlace();
+    if (!pl) return;
+    if (!tripOf(pl).to.length || again) return openPick("trip");
+    setPos(pl.id, TRIP);
+    render();
+  }
+  const saveTrips = () => ls.set("bus:trip", trips);
+  /** 加一個目的地（站名；和已經有的是同一個地點就不重複加），加完就看「目的地」那一格，面板留著（底下列出站哪一邊、哪幾條到得了）。 */
+  function addDest(name) {
+    const pl = currentPlace();
+    if (!pl) return;
+    const to = tripOf(pl).to;
+    if (!to.some((d) => destOf(d).names.includes(name))) { trips[pl.id] = [...to, { name }]; saveTrips(); }
+    setPos(pl.id, TRIP);
+    state.filter = ""; $("#flt").value = "";
+    render();
+    $("#pickList").scrollTop = 0;
+  }
+  function delDest(name) {
+    const pl = currentPlace();
+    if (!pl) return;
+    trips[pl.id] = tripOf(pl).to.filter((d) => d.name !== name); saveTrips();
+    render();
+  }
+  function resetDest() {
+    const pl = currentPlace();
+    if (!pl) return;
+    delete trips[pl.id]; saveTrips();
+    render();
   }
   function closePick() {
     if (!state.pick) return;
@@ -826,7 +983,8 @@ function startApp() {
     const sure = order.filter((u) => mins[u] != null && !byUnit.get(u).arr[0].upper);
     const hot = sure.find((u) => mins[u] === Math.min(...sure.map((x) => mins[x])));
     setHTML("#board", order.map((u) => routeRowHTML(byUnit.get(u), now, u === hot)).join("") +
-      (!pv.cur ? `<p class="empty">${esc(state.cityNote || "找不到這個站名的站牌")}</p>` : ""));
+      (!pv.cur ? `<p class="empty">${esc(state.cityNote || "找不到這個站名的站牌")}</p>`
+        : pv.cur.trip && !pv.rows.length ? `<p class="empty">關注的路線到不了。<button type="button" class="link" data-pick-open>看哪幾條到得了</button></p>` : ""));
     if (tops) slideRows(board, tops);
     if (!sameList && lastNums.id) { fadeIn(board, 8); fadeIn($("#leave"), 8); }      // 換了地點或候車位置：整份清單淡進來
     flipNumbers(board, listId);
@@ -904,6 +1062,7 @@ function startApp() {
     if (state.temp === name) { state.temp = null; ls.set("bus:temp", null); }
     delete watch["stop:" + name];
     delete posSel["stop:" + name]; ls.set("bus:pos", posSel);
+    if (trips["stop:" + name]) { delete trips["stop:" + name]; saveTrips(); }
     saveWatch();
     setPlace((allPlaces()[0] || {}).id || null);
   }
@@ -1055,7 +1214,7 @@ function startApp() {
     return (p && (p[7] || [p[5] != null && p[5] >= 0 ? "往" + C.compass8(p[5]) : "", p[6]].filter(Boolean).join("・"))) || "站牌";
   };
   function stationPopupHTML(st) {
-    const now = nowMs(), arr = stationArrivals({ entries: st.entries.filter((e) => isShown(byKey.get(e.key))) }).slice(0, 4);
+    const now = nowMs(), on = shownNow(), arr = stationArrivals({ entries: st.entries.filter((e) => on(byKey.get(e.key))) }).slice(0, 4);
     return `<div class="pop"><div class="pop-h"><div><b>${esc(st.name)}</b><span class="pop-dir">${esc(poleWord(st.station))}</span></div></div>` +
       (arr.length ? `<ul class="arows">${arr.map((a) => rowHTML(a, now)).join("")}</ul>` : `<p class="empty">目前沒有車</p>`) +
       `<p class="pop-f"><button type="button" class="link" data-stop="${esc(st.name)}">到等車頁看這一站</button></p></div>`;
@@ -1100,7 +1259,7 @@ function startApp() {
       maxZoom: 19, className: "night-tiles", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> 貢獻者',
     }).addTo(map);
     // 容器可能在寬度 0 時就初始化（分頁在背景載入）：先給暫時視角，拿到有效尺寸再對準；大小一變就重算
-    const fitVs = V.some(isShown) ? V.filter(isShown) : V;
+    const on = shownNow(), fitVs = V.some(on) ? V.filter(on) : V;
     const bounds = L.latLngBounds(fitVs.flatMap((v) => v.shape.map(ll)));
     let fitted = false;
     const onSize = () => {
@@ -1165,7 +1324,7 @@ function startApp() {
       if (!meMarker) meMarker = L.circleMarker([state.me.lat, state.me.lon], { radius: 7, color: "#fff", weight: 2.5, fillColor: "#2563eb", fillOpacity: 1, interactive: false }).addTo(map);
       else meMarker.setLatLng([state.me.lat, state.me.lon]);
     }
-    const shown = shownUnits(), on = (v) => shown.has(C.unitKey(v));
+    const on = shownOf(pv, pl);
     for (const v of V) setLayer(lines[v.key], on(v));
     // 目前地點的站牌畫大一點（關注或地點有變才重設樣式）
     const hereSig = (pl ? pl.id : "") + "|" + watchRev + "|" + pv.poles.length, here = new Set(pv.poles.map((p) => p.id));
@@ -1307,8 +1466,12 @@ function startApp() {
       const title = sec === pv.cur ? "" : `<h3 class="all-g">${esc(sec.long)}</h3>`;
       return title + (arr.length ? `<ul class="arows">${arr.map((a) => rowHTML(a, now)).join("")}</ul>` : `<p class="empty">45 分鐘內沒有車</p>`);
     }).join("");
-    body.innerHTML = `<div class="seg places" role="group" aria-label="地點">${placeChipsHTML(pl)}</div>` +
-      (pv.watched.length ? list : `<p class="empty">這個站還沒有關注的路線</p>`);
+    // 拉高時多一排：換「目的地／全部／候車位置」（地圖只畫現在看的那一格；收著的時候不放，免得把第一班車擠出去）
+    const posSeg = open && pv.cur && pv.bar.mode !== "plain" ? `<div class="seg dirs postabs sheet-pos" role="group" aria-label="候車位置">` +
+      (pv.bar.trip === "tab" && pv.dests.length ? tripTabHTML(pv) : "") + (pv.bar.all ? allTabHTML(pv) : "") +
+      (pv.bar.mode === "tabs" ? pv.bar.tabs : pv.cur.all ? [] : [pv.cur]).map((x) => posTabHTML(x, pv.cur)).join("") + `</div>` : "";
+    body.innerHTML = `<div class="seg places" role="group" aria-label="地點">${placeChipsHTML(pl)}</div>` + posSeg +
+      (pv.watched.length ? (pv.rows.length ? list : `<p class="empty">這一格沒有關注的路線</p>`) : `<p class="empty">這個站還沒有關注的路線</p>`);
     body.scrollTop = keep;
   }
 
@@ -1590,7 +1753,7 @@ function startApp() {
     if (h) navStack[h.i] = { tab: x.tab, route: x.route, bus: x.bus, pick: !!x.pick };
     navBusy = true;                                           // 套用記錄裡的畫面時不要又去改記錄
     state.selBus = x.bus || null;
-    state.pick = !!x.pick; state.posMenu = false;
+    state.pick = x.pick === "trip" ? "trip" : !!x.pick; state.posMenu = false;
     state.routePage = x.route ? (state.routePage && state.routePage.key === x.route ? state.routePage : routePageOf(x.route)) : null;
     setTab(TABS.includes(x.tab) ? x.tab : "wait");
     navBusy = false;
@@ -1623,7 +1786,12 @@ function startApp() {
     let x;
     if (state.posMenu && !t("[data-pos-menu]") && !t(".posmenu")) { state.posMenu = false; render(); if (!t("[data-pos]") && !t("[data-pick-open]")) return; }     // 點選單以外的地方：收起選單
     if (t("[data-pos-menu]")) { state.posMenu = !state.posMenu; return render(); }
-    if ((x = t("[data-pos]"))) { setPos(state.place, x.dataset.pos); state.posMenu = false; state.openRow = null; return render(); }
+    if ((x = t("[data-pos]"))) {
+      state.posMenu = false; state.openRow = null;
+      if (x.dataset.pos === TRIP) return pickTrip(x.getAttribute("aria-pressed") === "true");
+      setPos(state.place, x.dataset.pos);
+      return render();
+    }
     if (t("[data-pick-open]")) return openPick();
     if ((x = t("[data-unwatch]"))) return toggleWatch(x.dataset.unwatch);
     if ((x = t("[data-row]"))) { state.openRow = state.openRow === x.dataset.row ? null : x.dataset.row; return render(); }
@@ -1640,6 +1808,9 @@ function startApp() {
     if ((x = t("[data-pos]"))) { setPos(state.place, x.dataset.pos); render(); $("#pickList").scrollTop = 0; return; }
     if ((x = t("[data-watch]"))) return toggleWatch(x.dataset.watch);
     if ((x = t("[data-unsave]"))) return dropStop(x.dataset.unsave);
+    if ((x = t("[data-dest]"))) return addDest(x.dataset.dest);
+    if ((x = t("[data-dest-del]"))) return delDest(x.dataset.destDel);
+    if (t("[data-dest-reset]")) return resetDest();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
@@ -1681,6 +1852,8 @@ function startApp() {
   });
   $("#sheetBody").addEventListener("click", (e) => {
     if (placeClick(e)) return;
+    const p = e.target.closest("[data-pos]");
+    if (p) { setPos(state.place, p.dataset.pos); state.openRow = null; render(); return; }
     if (e.target.closest(".bc-x")) { state.selBus = null; render(); return; }
     const st = e.target.closest(".bc-stop");
     if (st) { openStationOnMap(st.dataset.station); return; }
@@ -1737,6 +1910,6 @@ function startApp() {
   boot();
   setInterval(() => { if (!document.hidden) { compute(); render(); } }, 5e3);
   window.__busApp = { state, tracker, A, V, groups, stations, stMarkers, busMarkers, unitsOf, loaded, get watch() { return watch; }, get map() { return map; }, get city() { return CITY; },
-    get posSel() { return posSel; }, helpers, placeView, allPlaces, currentPlace, openStop, openRoute, ensureRoute, motion, flipNum };   // 除錯用
+    get posSel() { return posSel; }, get trips() { return trips; }, tripOf, helpers, placeView, allPlaces, currentPlace, openStop, openRoute, ensureRoute, motion, flipNum };   // 除錯用
 }
 startApp();

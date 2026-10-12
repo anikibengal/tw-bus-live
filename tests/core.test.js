@@ -1756,3 +1756,65 @@ test("營運中的車帶著車輛資料回報的車速", () => {
   assert.deepEqual(act.map((b) => C.speedLabel(b.speed, b.ageS)), ["27 km/h", "0 km/h"]);
 });
 
+// ---------------------------------------------------------------- 目的地（出門／回家／去哪）
+test("目的地那一格怎麼排：已經設了的一定是一顆分頁；還沒設的不動原本的排法", () => {
+  const mk = (...labels) => labels.map((label, i) => ({ id: String(i + 1), label }));
+  const shape = (pos, watched, allSel, trip) => { const b = C.positionBar(pos, watched, allSel, trip); return [b.mode + (b.all ? "+全部" : "") + (b.trip ? "+" + b.trip : ""), b.tabs.map((p) => p.id), b.rest.map((p) => p.id)]; };
+  // 沒給 trip：和原本一模一樣（回傳多一個空字串的 trip）
+  assert.equal(C.positionBar(mk("往東", "往西"), ["1", "2"]).trip, "");
+  for (const t of ["set", "offer"]) assert.deepEqual(shape(mk("往東"), ["1"], false, t), ["plain", [], []], "只有一個位置：沒有站哪一邊的問題，不出");
+  // 兩個位置、標籤短：連「全部」四顆排得下
+  assert.deepEqual(shape(mk("往東", "往西"), ["1", "2"], false, "set"), ["tabs+全部+tab", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往東", "往西"), ["1", "2"], false, "offer"), ["tabs+全部+tab", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往東", "往西"), ["2"], false, "offer"), ["tabs+tab", ["1", "2"], []]);
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), ["3"], false, "offer"), ["tabs+tab", ["1", "2", "3"], []], "三個位置、沒有「全部」：剛好四顆");
+  assert.deepEqual(shape(mk("往西北", "往東南"), ["1", "2"], false, "set"), ["tabs+全部+tab", ["1", "2"], []], "3 個字還放得下");
+  // 排不下四顆：設了的改成「它＋全部＋其他」；還沒設的照原本的排法，放進「其他」當第一項
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), ["3", "2"], false, "set"), ["more+全部+tab", [], ["1", "2", "3"]]);
+  assert.deepEqual(shape(mk("往北", "往南", "往西南"), ["3", "2"], false, "offer"), ["more+全部+menu", ["2"], ["1", "3"]]);
+  const bays = mk("第一月台", "第二月台", "第三月台", "第四月台", "往東南");
+  assert.deepEqual(shape(bays, ["3", "1"], false, "set"), ["more+全部+tab", [], ["1", "2", "3", "4", "5"]], "板橋公車站：回家＋全部＋其他");
+  assert.deepEqual(shape(bays, ["3"], false, "set"), ["more+tab", ["3"], ["1", "2", "4", "5"]], "只有一個位置有關注：它還是一顆分頁");
+  assert.deepEqual(shape(bays, [], false, "set"), ["more+tab", [], ["1", "2", "3", "4", "5"]], "原本整個用選單：設了目的地就改成它＋其他");
+  assert.deepEqual(shape(bays, ["3", "1"], false, "offer"), ["more+全部+menu", ["1"], ["2", "3", "4", "5"]]);
+  assert.deepEqual(shape(bays, [], false, "offer"), ["drop+menu", [], ["1", "2", "3", "4", "5"]]);
+  assert.deepEqual(shape(mk("往西北", "中正東路35號對向"), ["2"], false, "set"), ["more+tab", [], ["1", "2"]], "有關注的那個標籤是地址：不做分頁");
+  // 標籤 4、5 個字（月台名）：四顆放不下
+  assert.deepEqual(shape(mk("第一月台", "第二月台"), ["1", "2"], false, "set"), ["more+全部+tab", [], ["1", "2"]]);
+  assert.deepEqual(shape(mk("第一月台", "第二月台"), ["1", "2"], false, "offer"), ["tabs+全部", ["1", "2"], []], "原本是分頁又排不下：這一版不出（不為了它把位置收進其他）");
+  assert.deepEqual(shape(mk("第一月台", "第二月台"), ["1"], false, "set"), ["more+tab", ["1"], ["2"]]);
+  // 四顆的上限把「全部」算進去
+  assert.deepEqual(shape(mk("往北", "往南", "往西"), ["1", "2"], true, "set"), ["more+全部+tab", [], ["1", "2", "3"]]);
+  assert.deepEqual(shape(mk("往東", "往西"), [], true, "set"), ["tabs+全部+tab", ["1", "2"], []], "選過「全部」：全部還在，一樣四顆");
+});
+
+test("從這一站上車之後最先到的目的地站：只看之後的站，反方向與已經過的不算", () => {
+  const stops = ["a", "b", "c", "d", "e", "c2"].map((name, i) => ({ name, station: [10, 20, 30, 40, 50, 30][i] }));
+  const dest = (...ids) => new Set(ids.map(String));
+  assert.deepEqual(C.reachStops(stops, 0, dest(30)), { n: 2, si: 2, name: "c" }, "下一站是 1，隔兩站是 2");
+  assert.deepEqual(C.reachStops(stops, 1, dest(30)), { n: 1, si: 2, name: "c" });
+  assert.deepEqual(C.reachStops(stops, 2, dest(30)), { n: 3, si: 5, name: "c2" }, "上車那一站自己不算；繞回來再經過算");
+  assert.equal(C.reachStops(stops, 3, dest(20)), null, "已經過了的站：到不了");
+  assert.equal(C.reachStops(stops, 5, dest(30)), null, "最後一站上車：後面沒有站");
+  assert.equal(C.reachStops(stops, 0, dest()), null);
+  assert.equal(C.reachStops(stops, 0, dest(99)), null);
+  assert.deepEqual(C.reachStops(stops, 0, dest(50, 40)), { n: 3, si: 3, name: "d" }, "幾個目的地站牌：取最先到的");
+  assert.deepEqual(C.reachStops(stops, 0, dest(50)), { n: 4, si: 4, name: "e" }, "終點站可以下車");
+  // 站牌編號怎麼取可以換（App 裡沒有編號的站用站名＋座標）
+  assert.deepEqual(C.reachStops(stops, 0, new Set(["d"]), (s) => s.name), { n: 3, si: 3, name: "d" });
+  assert.equal(C.reachStops(stops, 0, new Set(["40"]), (s) => s.name), null);
+  assert.equal(C.reachStops([], 0, dest(1)), null);
+});
+
+test("一列有幾個變體到得了：寫最快到的那個目的地；站數每個變體都一樣才寫", () => {
+  assert.equal(C.reachSummary([]), null);
+  assert.equal(C.reachSummary(null), null);
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }]), { d: 0, n: 5 });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }, { d: 0, n: 5 }]), { d: 0, n: 5 });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }, { d: 0, n: 7 }]), { d: 0, n: null }, "繞駛的變體站數不同：不寫站數");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 4 }, { d: 0, n: 6 }]), { d: 1, n: null }, "變體到的目的地不同：寫最快到的那個，不寫站數");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 4 }, { d: 0, n: 4 }]), { d: 0, n: null }, "一樣快：取排前面的目的地");
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 4 }, { d: 1, n: 4 }]), { d: 0, n: null }, "和傳入的順序無關");
+  assert.deepEqual(C.reachSummary([{ d: 2, n: 9 }, { d: 2, n: 3 }, { d: 2, n: 3 }]), { d: 2, n: null });
+});
+
