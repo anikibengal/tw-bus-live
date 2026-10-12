@@ -1809,12 +1809,57 @@ test("從這一站上車之後最先到的目的地站：只看之後的站，�
 test("一列有幾個變體到得了：寫最快到的那個目的地；站數每個變體都一樣才寫", () => {
   assert.equal(C.reachSummary([]), null);
   assert.equal(C.reachSummary(null), null);
-  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }]), { d: 0, n: 5 });
-  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }, { d: 0, n: 5 }]), { d: 0, n: 5 });
-  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }, { d: 0, n: 7 }]), { d: 0, n: null }, "繞駛的變體站數不同：不寫站數");
-  assert.deepEqual(C.reachSummary([{ d: 1, n: 4 }, { d: 0, n: 6 }]), { d: 1, n: null }, "變體到的目的地不同：寫最快到的那個，不寫站數");
-  assert.deepEqual(C.reachSummary([{ d: 1, n: 4 }, { d: 0, n: 4 }]), { d: 0, n: null }, "一樣快：取排前面的目的地");
-  assert.deepEqual(C.reachSummary([{ d: 0, n: 4 }, { d: 1, n: 4 }]), { d: 0, n: null }, "和傳入的順序無關");
-  assert.deepEqual(C.reachSummary([{ d: 2, n: 9 }, { d: 2, n: 3 }, { d: 2, n: 3 }]), { d: 2, n: null });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }]), { d: 0, n: 5, near: false });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }, { d: 0, n: 5 }]), { d: 0, n: 5, near: false });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5 }, { d: 0, n: 7 }]), { d: 0, n: null, near: false }, "繞駛的變體站數不同：不寫站數");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 4 }, { d: 0, n: 6 }]), { d: 1, n: null, near: false }, "變體到的目的地不同：寫最快到的那個，不寫站數");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 4 }, { d: 0, n: 4 }]), { d: 0, n: null, near: false }, "一樣快：取排前面的目的地");
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 4 }, { d: 1, n: 4 }]), { d: 0, n: null, near: false }, "和傳入的順序無關");
+  assert.deepEqual(C.reachSummary([{ d: 2, n: 9 }, { d: 2, n: 3 }, { d: 2, n: 3 }]), { d: 2, n: null, near: false });
 });
 
+test("一列裡有只到附近的變體：直達的先；只要有一個只到附近，話就不能說滿", () => {
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 4, near: true }]), { d: 0, n: 4, near: true });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 4, near: true }, { d: 0, n: 4, near: true }]), { d: 0, n: 4, near: true });
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 3, near: true }, { d: 1, n: 8 }]), { d: 1, n: null, near: true }, "直達的雖然比較慢，目的地寫它；但有變體只到附近");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 8 }, { d: 0, n: 3, near: true }]), { d: 1, n: null, near: true }, "和傳入的順序無關");
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 4 }, { d: 0, n: 4, near: true }]), { d: 0, n: null, near: true }, "同一個目的地、站數一樣，但一個直達一個只到附近：不寫站數");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 6, near: true }, { d: 0, n: 6, near: true }]), { d: 0, n: null, near: true }, "都只到附近、一樣快：取排前面的目的地");
+  assert.deepEqual(C.reachSummary([{ d: 1, n: 2, near: true }, { d: 0, n: 6, near: true }]), { d: 1, n: null, near: true }, "都只到附近：比誰快");
+  assert.deepEqual(C.reachSummary([{ d: 0, n: 5, near: false }]), { d: 0, n: 5, near: false });
+});
+
+test("沒有直達時坐到附近在哪一站下車：第一次靠近的那一段裡最近的一站", () => {
+  // 每 0.001 度緯度約 110.5 公尺；路線沿著經線往北，目的地在旁邊
+  const at = (lat, lon = 121.5) => ({ lat, lon });
+  const line = (...lats) => lats.map((lat, i) => ({ name: "s" + i, ...at(lat) }));
+  const dest = [at(25.0100, 121.5)];
+  // 897 的樣子：一站比一站近，終點最近（約 221、111 公尺）：坐到終點
+  const a = line(25.0000, 25.0040, 25.0080, 25.0090);
+  assert.deepEqual(C.nearStops(a, 0, dest, 250), { n: 3, si: 3, name: "s3", m: 111 });
+  assert.deepEqual(C.nearStops(a, 2, dest, 250), { n: 1, si: 3, name: "s3", m: 111 });
+  assert.equal(C.nearStops(a, 3, dest, 250), null, "最後一站上車：後面沒有站");
+  assert.equal(C.nearStops(a, 0, dest, 100), null, "門檻 100 公尺：最近也有 111，不算");
+  assert.deepEqual(C.nearStops(a, 0, dest, C.distM(a[3], dest[0])), { n: 3, si: 3, name: "s3", m: 111 }, "剛好等於門檻算");
+  assert.equal(C.nearStops(a, 0, dest, C.distM(a[3], dest[0]) - 0.01), null, "差一公分就不算");
+  // 經過之後開走：在最近的那一站下，不繼續坐
+  const b = line(25.0000, 25.0085, 25.0095, 25.0120, 25.0200);
+  assert.deepEqual(C.nearStops(b, 0, dest, 250), { n: 2, si: 2, name: "s2", m: 55 });
+  assert.deepEqual(C.nearStops(b, 2, dest, 250), { n: 1, si: 3, name: "s3", m: 221 }, "上車那一站自己不算：下一站還在範圍內就是它");
+  assert.equal(C.nearStops(b, 3, dest, 250), null, "已經開過了：到不了");
+  // 繞一大圈回來更近的不算：取第一次靠近的那一段
+  const c = line(25.0000, 25.0082, 25.0300, 25.0099);
+  assert.deepEqual(C.nearStops(c, 0, dest, 250), { n: 1, si: 1, name: "s1", m: 199 });
+  // 一樣近（差不到 1 公尺）：不再往下坐；近 1 公尺以上才多坐一站
+  assert.deepEqual(C.nearStops(line(25.0000, 25.0090, 25.0110), 0, dest, 250), { n: 1, si: 1, name: "s1", m: 111 });
+  assert.deepEqual(C.nearStops(line(25.0000, 25.0090, 25.010995), 0, dest, 250), { n: 1, si: 1, name: "s1", m: 111 }, "近 0.6 公尺：不算");
+  assert.deepEqual(C.nearStops(line(25.0000, 25.0090, 25.01098), 0, dest, 250), { n: 2, si: 2, name: "s2", m: 108 }, "近 2 公尺：多坐一站");
+  // 目的地有好幾根站牌：算到最近的那一根
+  assert.deepEqual(C.nearStops(a, 0, [at(25.0300), at(25.0092)], 250), { n: 3, si: 3, name: "s3", m: 22 });
+  assert.equal(C.nearStops(a, 0, [], 250), null, "沒有目的地的站牌");
+  assert.equal(C.nearStops([], 0, dest, 250), null);
+  // 沒給門檻：用 P.nearDestM（250）
+  assert.equal(C.P.nearDestM, 250);
+  assert.deepEqual(C.nearStops(a, 0, dest), { n: 3, si: 3, name: "s3", m: 111 });
+  assert.equal(C.nearStops(line(25.0000, 25.0077), 0, dest), null, "254 公尺：超過 250");
+});

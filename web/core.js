@@ -45,6 +45,7 @@
     speedFreshS: 45,                 // 每台車的「現在時速」：定位超過這麼久沒更新就不寫
     speedMaxKmh: 110,                //   超過這個速度當成壞值不寫
     siblingM: 200,                   // 站名只差括號的兩個站，最近的站牌相隔這麼近才算同一個地點（約走 3 分鐘；見 stopGroups）
+    nearDestM: 250,                  // 目的地：沒有直達時，下車的站離目的地的站牌在這麼近以內就算「到附近」（直線距離；見 nearStops）
     siblingShare: 0.5,               //   兩邊都停的（路線、方向）占較少那一邊的比例到這麼高，就當成沿線的前後兩站，不合
     originKm: 0.5,                   // 起點附近：有車停在這裡就不再用班表補同一班
     originMatchMin: 12,              // 起點附近的車對到 ±12 分內最近的班表發車時刻
@@ -406,14 +407,35 @@
     return null;
   }
   /**
-   * 一列（一條路線的一個方向）有幾個變體到得了目的地時，那一行字寫哪個目的地、隔幾站。
-   * hits＝每個到得了的變體一筆 { d（第幾個目的地）, n（隔幾站）}。回傳 { d, n }：d 取最快到的那一筆的（一樣快取排前面的目的地）；
-   * n 只有每個變體的目的地和站數都一樣才給，不然是 null（繞駛的變體站數不同，寫一個數字會寫錯）。沒有任何一筆回傳 null。
+   * 沒有直達時，「坐到目的地附近再走一段」要在哪一站下車（使用者 2026-10-12：897 往板橋的終點離板橋公車站 211 公尺，也要列）。
+   * pts＝目的地各站牌的座標 [{lat, lon}]；maxM＝多近算附近（預設 P.nearDestM）。距離是到最近那根站牌的直線距離。
+   * 取「之後第一次進到 maxM 以內的那一段」裡最近的一站：進來之後下一站還更近（近 1 公尺以上）就繼續坐，不然就在這一站下。
+   * 不是整條路線最近的那一站——繞一大圈回來更近的不算，那要多坐很久。
+   * 回傳 { n（隔幾站）, si, name, m（下車站離目的地幾公尺，取整數）} 或 null。
+   */
+  function nearStops(stops, from, pts, maxM = P.nearDestM) {
+    const far = (s) => Math.min(...pts.map((p) => distM(s, p)));
+    for (let i = from + 1; i < stops.length; i++) {
+      let m = far(stops[i]);
+      if (!(m <= maxM)) continue;
+      while (i + 1 < stops.length && far(stops[i + 1]) < m - 1) m = far(stops[++i]);      // 近不到 1 公尺不值得多坐一站
+      return { n: i - from, si: i, name: stops[i].name, m: Math.round(m) };
+    }
+    return null;
+  }
+  /**
+   * 一列（一條路線的一個方向）有幾個變體到得了目的地時，那一行字寫哪個目的地、隔幾站、是不是只到附近。
+   * hits＝每個到得了的變體一筆 { d（第幾個目的地）, n（隔幾站）, near（只到附近；直達的不給或 false）}。
+   * 回傳 { d, n, near }：d 取最好的那一筆的——直達的先、再比誰快、一樣快取排前面的目的地；
+   * n 只有每個變體的目的地、站數、是不是附近都一樣才給，不然是 null（繞駛的變體站數不同，寫一個數字會寫錯）；
+   * near＝只要有一個變體只到附近就是 true（話不能說得比最差的那個變體滿）。沒有任何一筆回傳 null。
    */
   function reachSummary(hits) {
     if (!hits || !hits.length) return null;
-    const best = hits.reduce((a, b) => (b.n < a.n || (b.n === a.n && b.d < a.d) ? b : a));
-    return { d: best.d, n: hits.every((h) => h.d === best.d && h.n === best.n) ? best.n : null };
+    const better = (a, b) => (!!a.near !== !!b.near ? !a.near : a.n !== b.n ? a.n < b.n : a.d < b.d);
+    const best = hits.reduce((a, b) => (better(b, a) ? b : a));
+    const same = hits.every((h) => h.d === best.d && h.n === best.n && !!h.near === !!best.near);
+    return { d: best.d, n: same ? best.n : null, near: hits.some((h) => !!h.near) };
   }
   /** 關注的單位：一條路線的一個方向（同方向的繞駛、區間變體算同一個）。鍵＝「來源:主路線編號|方向」，和全市索引對得上。 */
   function unitKey(v) { return `${v.src || "tpe"}:${v.routeId}|${v.direction}`; }
@@ -1177,7 +1199,7 @@
 
   return { P, tpeParts, serviceDay, hhmmToMin, fmtTime, parseTpe, prepLine, project, parseBlobJson, indexEta, mergeEta, officialNext,
            distM, nearestPlatforms, nearestStops, searchRoutes, searchStops, splitStopName, stopGroups,
-           compass8, headingDiff, bayNo, positions, positionBar, reachStops, reachSummary, unitKey, carryOver, arrivalOrder, splitRouteName, pickColor, routeColors, rememberColors, helperRoutes, routeCompare,
+           compass8, headingDiff, bayNo, positions, positionBar, reachStops, nearStops, reachSummary, unitKey, carryOver, arrivalOrder, splitRouteName, pickColor, routeColors, rememberColors, helperRoutes, routeCompare,
            tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, paceUpdate, paceNow, paceState, travelMin, roadAhead, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
            calibGroup, isApprox, carKind, speedLabel, flapCells, earliestMs, upcomingForBus, rideEstimate, tweenKm, planTween };
 });

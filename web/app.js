@@ -271,22 +271,24 @@ function startApp() {
   const destCache = new Map();
   /**
    * 一個目的地的站牌：那個站名、和它合成同一個地點的站名；它是常用地點的話就是那個地點全部的站名。
-   * 回傳 { name, label, names, ids（站牌編號）, routes（有停這些站牌的路線鍵：用來先篩掉根本不停的路線）}。全市索引載入後才有內容。
+   * 回傳 { name, label, names, ids（站牌編號）, pts（站牌編號 → 座標）}。全市索引載入後才有內容。
    */
   function destOf(d) {
     const ck = d.name + "|" + (d.label || "");
     if (destCache.has(ck)) return destCache.get(ck);
     const cfg = A.places.find((p) => namesOf(p).includes(d.name));
-    const names = cfg ? namesOf(cfg) : sibNames(d.name), ids = new Set(), routes = new Set();
-    for (const p of CITY ? CITY.plats : []) if (names.includes(p[1])) { ids.add(String(p[0])); for (const e of p[4]) routes.add(CITY.routes[e[0]][0]); }
-    const out = { name: d.name, label: d.label || (cfg ? cfg.name : sibLabel(d.name)), names, ids, routes };
+    const names = cfg ? namesOf(cfg) : sibNames(d.name), ids = new Set(), pts = new Map();
+    for (const p of CITY ? CITY.plats : []) if (names.includes(p[1])) { ids.add(String(p[0])); pts.set(String(p[0]), { lat: p[2], lon: p[3] }); }
+    const out = { name: d.name, label: d.label || (cfg ? cfg.name : sibLabel(d.name)), names, ids, pts };
     if (CITY) destCache.set(ck, out);
     return out;
   }
   /**
    * 從這根站牌搭這條（路線、方向）到不到得了目的地：到得了的變體各一筆（變體鍵 → { d 第幾個目的地, n 隔幾站 }），都到不了是空的。
-   * 判定只看「這根站牌之後的站序」（core.reachStops）。路線還沒載入就看它的資料檔（「去哪」面板要列還沒關注的路線）；
-   * 資料檔也還沒讀到回傳 null＝還不知道。dests 的 own＝目的地的站牌編號（不含這個地點自己的站牌）。
+   * 判定只看「這根站牌之後的站序」：有站就在目的地的是直達（core.reachStops）；沒有直達、但坐到目的地附近的另外算
+   * （core.nearStops：那一筆多帶 near、下車的站名 name、離目的地幾公尺 m）。一個變體取最好的一個目的地：直達的先、再比誰快。
+   * 路線還沒載入就看它的資料檔（「去哪」面板要列還沒關注的路線）；資料檔也還沒讀到回傳 null＝還不知道。
+   * dests 的 own＝目的地的站牌編號、ownPts＝它們的座標（都不含這個地點自己的站牌）。
    */
   function itemReach(it, dests) {
     const vs = unitsOf.get(it.unit) || (routeFiles.has(it.routeKey) ? routeFiles.get(it.routeKey).variants.filter((v) => C.unitKey(v) === it.unit) : null);
@@ -296,9 +298,13 @@ function startApp() {
       const hits = [];
       v.stops.forEach((s, si) => {
         if (stKey(s) !== it.pole.id || si >= v.stops.length - 1) return;
-        dests.forEach((d, di) => { const r = C.reachStops(v.stops, si, d.own, stKey); if (r) hits.push({ d: di, n: r.n }); });
+        dests.forEach((d, di) => {
+          const r = C.reachStops(v.stops, si, d.own, stKey), nr = r ? null : C.nearStops(v.stops, si, d.ownPts);
+          if (r) hits.push({ d: di, n: r.n }); else if (nr) hits.push({ d: di, n: nr.n, near: true, name: nr.name, m: nr.m });
+        });
       });
-      if (hits.length) out.set(v.key, hits.reduce((a, b) => (b.n < a.n || (b.n === a.n && b.d < a.d) ? b : a)));
+      const better = (a, b) => (!!a.near !== !!b.near ? !a.near : a.n !== b.n ? a.n < b.n : a.d < b.d);
+      if (hits.length) out.set(v.key, hits.reduce((a, b) => (better(b, a) ? b : a)));
     }
     return out;
   }
@@ -415,7 +421,10 @@ function startApp() {
     const withRows = pos.filter((x) => x.watched.length);
     const dist = (x) => Math.min(...x.poles.map((p) => distM(state.me, p)));
     const trip = tripOf(pl), mine = new Set(poles.map((p) => p.id));
-    const dests = trip.to.map((d) => { const x = destOf(d); return { ...x, own: new Set([...x.ids].filter((id) => !mine.has(id))) }; });
+    const dests = trip.to.map((d) => {
+      const x = destOf(d), own = [...x.ids].filter((id) => !mine.has(id));
+      return { ...x, own: new Set(own), ownPts: own.map((id) => x.pts.get(id)) };
+    });
     const bar = C.positionBar(pos, withRows.map((x) => x.id), posSel[pl.id] === ALL, !CITY ? "" : dests.length ? "set" : "offer");
     const sel = posSel[pl.id] === undefined && bar.trip === "tab" && dests.length ? TRIP : posSel[pl.id];
     const once = (key) => { const seen = new Set(); return (x) => !seen.has(key(x)) && seen.add(key(x)); };      // 同一條路線停兩個位置：算前面那一個
@@ -426,7 +435,7 @@ function startApp() {
         const hit = itemReach(r.it, dests), sum = hit && C.reachSummary([...hit.values()]);
         if (!sum) return null;
         for (const k of hit.keys()) tripKeys.add(k);
-        return { ...r, arr: r.arr.filter((a) => a.v && hit.has(a.v.key)), reach: { n: sum.n, label: dests[sum.d].label } };
+        return { ...r, arr: r.arr.filter((a) => a.v && hit.has(a.v.key)), reach: { n: sum.n, near: sum.near, label: dests[sum.d].label } };
       }).filter(Boolean).filter(once((r) => r.it.unit));
       cur = { id: TRIP, trip: true, all: true, label: trip.label, long: trip.label, addr: "", poles: [...new Set(rows.map((r) => r.at))].flatMap((x) => x.poles),
               items: pos.flatMap((x) => x.items).filter(once((it) => it.unit)), watched: rows.map((r) => r.it), rows };
@@ -711,8 +720,8 @@ function startApp() {
     return `<div class="rt-more">${body}<div class="rt-acts">${last ? `<span class="rt-last">起站末班 ${last}</span>` : ""}` +
       `<button type="button" class="btn" data-unwatch="${esc(r.it.unit)}">不再關注</button></div></div>`;
   }
-  /** 「目的地」那一格的每一列寫的那句：隔幾站到哪裡（變體的站數不一樣時只寫到哪裡）。 */
-  const reachText = (x) => (x.n != null ? `${x.n} 站到 ${x.label}` : `到 ${x.label}`);
+  /** 「目的地」那一格的每一列寫的那句：隔幾站到哪裡（變體的站數不一樣時只寫到哪裡）；只坐到附近、還要走一段的後面加「附近」。 */
+  const reachText = (x) => (x.n != null ? `${x.n} 站到 ${x.label}` : `到 ${x.label}`) + (x.near ? "附近" : "");
   /** 一條關注的路線一列：下一班幾分（大字）、往哪裡、再來兩班。點了展開看每一台車。「全部」時往哪裡那一行改放在最下面、前面寫在哪裡等（r.at）；「目的地」時那一行寫隔幾站到哪裡（r.reach）。 */
   function routeRowHTML(r, now, hot) {
     const a = r.arr[0], big = bigOf(a, now), early = a ? earliestText(a, now) : "";
@@ -770,7 +779,10 @@ function startApp() {
   const tripPeek = new Map();          // 「去哪」面板為了查站序去讀的路線資料檔（一條只讀一次）
   /**
    * 「去哪」面板（設定這個地點的目的地）：上面打站名找目的地；下面每個目的地一段，寫站哪一邊、哪幾條到得了、隔幾站，每條一顆關注開關。
-   * 列的是這個站每個候車位置停的全部路線裡到得了的，不只已經關注的（所以要讀還沒載入的路線的資料檔；只讀「目的地也有停」的那幾條）。
+   * 只坐到附近的寫「附近」與離目的地幾公尺（直線距離）、在哪一站下車——距離寫前面，放不下時被截掉的是站名的尾巴。
+   * 列的是這個站每個候車位置停的全部路線裡到得了的，不只已經關注的，所以要讀還沒載入的路線的資料檔（這個站停幾條就讀幾條，一條約 5 KB；
+   * 一般的站十條以內，最大的站七十條）。不能用全市索引先篩「目的地有沒有這條路線」：索引不列終點站（只下不上），
+   * 而「坐到終點就在目的地旁邊」正是要找的（577 的終點捷運府中站(府中路)離後站商圈 187 公尺）。
    */
   function renderTripPick(pv, pl, now) {
     const q = state.filter.trim(), flt = $("#flt"), wk = watch[pl.id] || [];
@@ -783,17 +795,21 @@ function startApp() {
       const segs = pv.pos.map((x) => {
         const rows = [];
         for (const it of x.items) {
-          if (!d.routes.has(it.routeKey)) continue;                 // 這條路線根本不停目的地：不用查站序
           const hit = itemReach(it, [d]), sum = hit && C.reachSummary([...hit.values()]);
           if (!hit) { wait = true; if (!tripPeek.has(it.routeKey)) tripPeek.set(it.routeKey, fetchRoute(it.routeKey).then(() => render(), () => {})); }
-          if (sum) rows.push({ it, info: itemInfo(it), n: sum.n });
+          if (sum) {
+            const hs = [...hit.values()], one = sum.near && hs.every((h) => h.near && h.name === hs[0].name && h.m === hs[0].m) ? hs[0] : null;
+            rows.push({ it, info: itemInfo(it), n: sum.n, near: sum.near, off: one });      // off＝只到附近時在哪一站下車（各變體一樣才寫）
+          }
         }
         return { x, rows: rows.sort((a, b) => C.routeCompare(a.info.label, b.info.label)) };
       }).filter((g) => g.rows.length);
       return `<h3 class="all-g dest-h"><span>去 ${esc(d.label)}</span><button type="button" class="link" data-dest-del="${esc(d.name)}">移除</button></h3>` +
         (segs.map(({ x, rows }) => `<div class="dest-at"><small>站這一邊</small><b>${esc(x.label)}</b>${!x.bay && x.addr && x.addr !== x.label ? `<span>${esc(x.addr)}</span>` : ""}</div>` +
-          rows.map(({ it, info, n }) => { const on = wk.includes(it.unit); return `<div class="all-row">${badgeHTML(info.label, info.col, "sm")}<span class="to">${n != null ? n + " 站" : "到得了"}</span>${pickEtaHTML(it, info, on, now)}${watchBtnHTML(it, info, on)}</div>`; }).join("")).join("") ||
-          `<p class="empty">${wait ? "查詢中…" : "從這個站沒有直達的公車"}</p>`);
+          rows.map(({ it, info, n, near, off }) => {
+            const on = wk.includes(it.unit), more = !near ? "" : `<small>${off ? `離 ${off.m} m・${esc(off.name)}下車` : "到附近，要再走一段"}</small>`;
+            return `<div class="all-row">${badgeHTML(info.label, info.col, "sm")}<span class="to${near ? " near" : ""}">${n != null ? n + " 站" : "到得了"}${near ? "・附近" : ""}${more}</span>${pickEtaHTML(it, info, on, now)}${watchBtnHTML(it, info, on)}</div>`;
+          }).join("")).join("") + (wait ? `<p class="empty">還在查其他路線…</p>` : segs.length ? "" : `<p class="empty">從這個站沒有到得了的公車</p>`));
     };
     let html;
     if (q) {
