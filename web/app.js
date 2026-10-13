@@ -48,7 +48,7 @@ function startApp() {
   // 動態：只在「畫面剛變了」的時候動一下，讓人看得出變了什麼。系統設成減少動態效果、或頁面不在前景時都不動。
   const canMove = () => !REDUCED_MOTION && !document.hidden && typeof Element.prototype.animate === "function";
   const EASE = "cubic-bezier(.2, .8, .2, 1)";
-  const motion = { slides: 0, flips: 0, fades: 0, strip: 0, pulses: 0, tabs: 0 };      // 各做了幾次（除錯用）
+  const motion = { slides: 0, flips: 0, fades: 0, strip: 0, pulses: 0, tabs: 0, press: 0 };      // 各做了幾次（除錯用）
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const fmt = (ms) => (ms == null || !Number.isFinite(ms) ? "--:--" : C.fmtTime(ms));
   const ls = {
@@ -862,6 +862,13 @@ function startApp() {
     render();
     $("#pickList").scrollTop = 0;
   }
+  /** 候車位置那一排剛換了選的那一顆：新選的那一顆「按下去」——先浮起來一點、壓過頭、停在比別顆低 1px 的地方（靜止的樣子在 CSS）。 */
+  function pressIn(root) {
+    const b = root.querySelector('.postabs [aria-pressed="true"]');
+    if (!b || !canMove()) return;
+    b.animate([{ transform: "translateY(-1px) scale(1.03)" }, { transform: "translateY(2px) scale(.95)", offset: .55 }, { transform: "translateY(1px) scale(1)" }], { duration: 220, easing: "ease-out" });
+    motion.press++;
+  }
   /** 點了「目的地」那一格：還沒設過、或已經選著它再點一次 → 打開「去哪」面板；不然切過去。 */
   function pickTrip(again) {
     const pl = currentPlace();
@@ -869,6 +876,7 @@ function startApp() {
     if (!tripOf(pl).to.length || again) return openPick("trip");
     setPos(pl.id, TRIP);
     render();
+    pressIn($("#posRow"));
   }
   const saveTrips = () => ls.set("bus:trip", trips);
   /** 加一個目的地（站名；和已經有的是同一個地點就不重複加），加完就看「目的地」那一格，面板留著（底下列出站哪一邊、哪幾條到得了）。 */
@@ -1805,8 +1813,11 @@ function startApp() {
     if ((x = t("[data-pos]"))) {
       state.posMenu = false; state.openRow = null;
       if (x.dataset.pos === TRIP) return pickTrip(x.getAttribute("aria-pressed") === "true");
+      const same = x.getAttribute("aria-pressed") === "true";
       setPos(state.place, x.dataset.pos);
-      return render();
+      render();
+      if (!same) pressIn($("#posRow"));
+      return;
     }
     if (t("[data-pick-open]")) return openPick();
     if ((x = t("[data-unwatch]"))) return toggleWatch(x.dataset.unwatch);
@@ -1869,7 +1880,7 @@ function startApp() {
   $("#sheetBody").addEventListener("click", (e) => {
     if (placeClick(e)) return;
     const p = e.target.closest("[data-pos]");
-    if (p) { setPos(state.place, p.dataset.pos); state.openRow = null; render(); return; }
+    if (p) { const same = p.getAttribute("aria-pressed") === "true"; setPos(state.place, p.dataset.pos); state.openRow = null; render(); if (!same) pressIn($("#sheetBody")); return; }
     if (e.target.closest(".bc-x")) { state.selBus = null; render(); return; }
     const st = e.target.closest(".bc-stop");
     if (st) { openStationOnMap(st.dataset.station); return; }
