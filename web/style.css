@@ -20,8 +20,8 @@
   --bad: #ff6b66;                  /* 連不上、前方停滯 */
   --chip-ink: #251615;             /* 路線牌與珊瑚底上的字 */
   --nav-bg: #251615; --nav-ink: #b9a6a1; --nav-on: #ff8461;     /* 底下的分頁列：深底，選中的是珊瑚色 */
-  --well: #120a09; --well-ink: #ff8461;                         /* 按下去的鍵（候車位置、方向那種一排選一顆的）：凹槽的底色與字 */
-  --well-shade: rgba(0, 0, 0, .7); --well-rim: rgba(255, 246, 242, .1);      /*   上緣的內陰影、下緣的反光 */
+  --well: #ff8461; --well-ink: #251615;                         /* 按下去的鍵（候車位置、方向那種一排選一顆的）：整顆填珊瑚色、深色字 */
+  --well-shade: rgba(0, 0, 0, .42); --well-rim: rgba(255, 255, 255, .3);     /*   上緣的內陰影、下緣的反光 */
   --radius: 22px;
   --font: "Urbanist", "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
   color-scheme: dark;
@@ -32,7 +32,7 @@
     --bg: #f2efed; --surface: #ffffff; --surface-2: #f6f1ee; --line: #e6deda;
     --ink: #251615; --ink-2: #6b5a57; --ink-3: #766562;
     --accent-ink: #c73835; --good: #c73835; --warn: #8a5a00; --bad: #a61e1a;
-    --well: #e7e0dc; --well-ink: #a82b28; --well-shade: rgba(37, 22, 21, .3); --well-rim: #fff;      /* 字比 --accent-ink 深一點：灰底上要有 4.5 的對比 */
+    --well-shade: rgba(37, 22, 21, .32); --well-rim: rgba(255, 255, 255, .35);      /* 按下去的鍵：一樣填珊瑚色，陰影淡一點 */
     color-scheme: light;
   }
   .night-tiles { filter: grayscale(.85) contrast(.96) brightness(1.03) !important; }      /* 淺色：底圖接近灰階，路線與車的顏色才跳得出來 */
@@ -283,9 +283,10 @@ input[type="search"] { flex: 1; min-width: 140px; }
 .rp-h small { display: block; font-size: 12px; color: var(--ink-2); }
 .seg.dirs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; width: 100%; border-radius: 22px; padding: 4px; margin-bottom: 10px; }
 .seg.dirs button { min-height: 44px; border-radius: 18px; font-weight: 700; white-space: normal; padding-left: 8px; padding-right: 8px; }
-/* 選中的那一顆像按下去的鍵：比那一排的底更深、上緣有內陰影、下緣一條反光，整顆低 1px；字用強調色。
-   原本只比底色亮一點、加一圈細線，看不出選了哪一顆（使用者 2026-10-14：「出門」那一列顏色不明顯，要有按下去的感覺）。 */
-.seg.dirs button[aria-pressed="true"] { background: var(--well); color: var(--well-ink); box-shadow: inset 0 2px 5px var(--well-shade), inset 0 -1px 0 var(--well-rim); transform: translateY(1px); }
+/* 選中的那一顆像按下去的鍵：整顆填珊瑚色、深色字，上緣有內陰影、下緣一條反光，整顆低 1px。
+   原本只比底色亮一點、加一圈細線，看不出選了哪一顆（使用者 2026-10-14：「出門」那一列顏色不明顯，要有按下去的感覺）；
+   第一版是比底更深的凹槽＋珊瑚色的字，深色模式還是看不太出來，看過三種樣子後他選「實心珊瑚、壓下去」。 */
+.seg.dirs button[aria-pressed="true"] { background: var(--well); color: var(--well-ink); box-shadow: inset 0 3px 5px var(--well-shade), inset 0 -1px 0 var(--well-rim); transform: translateY(1px); }
 #routePage .hint { margin: 0 2px 8px; }
 
 /* ---------- 地圖＋底下的清單 ---------- */
