@@ -558,6 +558,96 @@ test("前方路況：只就量到的分段算均速，並回報量到的比例",
   assert.deepEqual(C.roadAhead(tr, "900", 6, now), { coverage: 0, kmh: null });
 });
 
+// ---------------------------------------------------------------- 地圖上慢的路段
+// 步調（分／公里）：3＝20 km/h（順）、9＝6.7 km/h（低速）、20＝3 km/h（停滯）。每段 0.2 km，前後各 2 段一起平均（約 1 km）。
+const roadOf = (paces, at, variants = [VARIANT], id = "900") => {
+  const tr = C.createTracker(variants), ent = C.entOf(tr, id);
+  for (const [b, pace, t] of paces) ent.bins[b] = C.paceState(pace, t == null ? at : t);
+  return { tr, ent, got: () => C.slowStretches(tr, id, at).map((x) => [+x.k0.toFixed(2), +x.k1.toFixed(2), x.jam, +x.kmh.toFixed(2)]) };
+};
+const span = (b0, b1, pace, t) => Array.from({ length: b1 - b0 + 1 }, (_, i) => [b0 + i, pace, t]);
+
+test("地圖路況：一整段慢才標，單一分段慢（靠站、紅燈）不標", () => {
+  const now = T("09:30");
+  // 全線順、只有第 20 段 5 km/h：那 1 km 平均 12.5 km/h，不標
+  assert.deepEqual(roadOf([...span(0, 49, 3), [20, 12]], now).got(), []);
+  // 4–6 km 整段 6.7 km/h：邊上的分段和順的一起平均（第 19 段 11.1、第 20 段 9.1），所以剛好從 4.0 標到 6.0
+  assert.deepEqual(roadOf([...span(0, 19, 3), ...span(20, 29, 9), ...span(30, 49, 3)], now).got(), [[4, 6, false, 6.67]]);
+});
+
+test("地圖路況：停滯夾在低速中間時分成三段，相鄰同一級的才併", () => {
+  const now = T("09:30");
+  const r = roadOf([...span(0, 19, 3), ...span(20, 22, 9), ...span(23, 26, 20), ...span(27, 29, 9), ...span(30, 49, 3)], now);
+  // 第 21 段：3,9,9,9,20 → 6 km/h（低速）；第 22 段：9,9,9,20,20 → 4.5 km/h（停滯）；第 28 段對稱
+  assert.deepEqual(r.got().map((x) => x.slice(0, 3)), [[4, 4.4, false], [4.4, 5.6, true], [5.6, 6, false]]);
+  assert.equal(r.got()[1][3], 3.37, "停滯那一段寫最慢的 1 km 平均（第 24、25 段的窗：9,20,20,20,20）");
+});
+
+test("地圖路況：1 km 裡量到的不到六成不判斷；剛好六成要判斷", () => {
+  const now = T("09:30");
+  assert.deepEqual(roadOf([[20, 30], [21, 30]], now).got(), [], "只有兩段（四成）：不判斷，也不畫");
+  assert.deepEqual(roadOf([[20, 30], [21, 30], [22, 30]], now).got(), [[4, 4.6, true, 2]], "三段（六成）：第 20～22 段的窗剛好六成");
+});
+
+test("地圖路況：門檻——10.5 km/h 不算低速、5.5 km/h 是低速不是停滯、4.5 km/h 是停滯", () => {
+  const now = T("09:30"), at = (kmh) => roadOf(span(0, 49, 60 / kmh), now).got();
+  assert.deepEqual(at(10.5), []);
+  assert.deepEqual(at(5.5), [[0, 10, false, 5.5]]);
+  assert.deepEqual(at(4.5), [[0, 10, true, 4.5]]);
+});
+
+test("地圖路況：開頭的窗不滿 5 段——三段裡兩段有量到（六成七）要判斷，四段裡兩段（五成）不判斷", () => {
+  assert.deepEqual(roadOf([[0, 9], [1, 9]], T("09:30")).got(), [[0, 0.2, false, 6.67]]);
+});
+
+test("地圖路況：借來的段速照兩邊的長度比例換算", () => {
+  const now = T("09:30");
+  const A2 = mk("930", "93A", "A2", [["起", 0], ["共1", 1], ["終", 2]], 2);
+  const D2 = mk("931", "93D", "D2", [["起", 0], ["共1", 1.08], ["終", 2.16]], 2.16);      // 同一段路，D2 量起來長 8%
+  const tr = C.createTracker([A2, D2]), D = C.entOf(tr, "931");
+  for (let b = 0; b < 11; b++) D.bins[b] = C.paceState(9, now);
+  const got = C.slowStretches(tr, "930", now);
+  assert.equal(got.length, 1);
+  assert.ok(Math.abs(got[0].kmh - 60 / (9 * 1.08)) < 1e-6, `應為 ${60 / (9 * 1.08)}，實得 ${got[0].kmh}`);
+});
+
+test("地圖路況：只看 20 分鐘內有車經過的分段", () => {
+  const now = T("09:30"), slow = (ago) => roadOf(span(0, 49, 9, now - ago * 60e3), now).got();
+  assert.deepEqual(slow(25), [], "25 分鐘前的慢不算現在");
+  assert.equal(slow(20).length, 1, "剛好 20 分鐘還算");
+  assert.equal(slow(20)[0][2], false);
+  // 19 分鐘前量到 6.7 km/h：濾波已經往預設車速退了一些（現在約 8 km/h），仍然是低速
+  assert.ok(Math.abs(slow(19)[0][3] - 60 / (60 / 18 + (9 - 60 / 18) * Math.exp(-19 / 60))) < 0.01);
+});
+
+test("地圖路況：頭尾的窗只算路線上的分段；最後一段不滿 0.2 km 時畫到終點為止", () => {
+  const now = T("09:30");
+  assert.deepEqual(roadOf([...span(0, 44, 3), ...span(45, 49, 9)], now).got(), [[9, 10, false, 6.67]], "尾端 1 km：第 45 段的窗 3,3,9,9,9 也算低速");
+  assert.deepEqual(roadOf(span(0, 4, 9), now).got(), [[0, 1, false, 6.67]], "開頭：第 4 段的窗 9,9,9,沒量到,沒量到 剛好六成");
+  const V51 = mk("920", "92X", "短", [["起", 0], ["中", 2.5], ["終", 5.1]], 5.1);
+  const tr = C.createTracker([V51]), ent = C.entOf(tr, "920");
+  for (let b = 0; b < 26; b++) ent.bins[b] = C.paceState(9, now);
+  const got = C.slowStretches(tr, "920", now);
+  assert.equal(got.length, 1);
+  assert.ok(Math.abs(got[0].k1 - ent.line.lengthKm) < 1e-9, `應畫到終點 ${ent.line.lengthKm}，實得 ${got[0].k1}`);
+});
+
+test("地圖路況：共用路段借另一條路線的段速；分岔段不借", () => {
+  const now = T("09:30");
+  const tr = C.createTracker([VA, VB]), B = C.entOf(tr, "911");
+  for (let k = 0; k < 5.05; k += 0.2) B.bins[Math.floor(k / C.P.binKm + 1e-9)] = C.paceState(9, now);
+  // A 自己沒有量到；共用的是 共2→共3→終（3–5 km），起→共1（0–1 km）也共用；共1→甲→共2 是 A 專屬
+  const got = C.slowStretches(tr, "910", now).map((x) => [+x.k0.toFixed(2), +x.k1.toFixed(2), x.jam]);
+  assert.deepEqual(got, [[0, 1, false], [3, 5, false]]);
+});
+
+test("地圖路況：沒有這條路線、舊格式的分段，都不畫", () => {
+  const now = T("09:30"), tr = C.createTracker([VARIANT]);
+  assert.deepEqual(C.slowStretches(tr, "999", now), []);
+  for (let b = 0; b < 50; b++) C.entOf(tr, "900").bins[b] = { pace: 20, at: now };
+  assert.deepEqual(C.slowStretches(tr, "900", now), []);
+});
+
 // ---------------------------------------------------------------- 段速的卡爾曼濾波
 test("段速的卡爾曼更新：第一台車的增益是 S/(S+R)，看過越多台越接近它們的平均，不是只信最新一台", () => {
   const t0 = T("09:00"), prior = 60 / 18, S = C.P.paceVar, R = C.P.paceNoise, near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg || ""} ${a} vs ${b}`);

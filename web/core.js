@@ -53,6 +53,12 @@
     helperKeepMin: 10,               // 幫手路線（只拿來量段速、不上畫面）的車，軌跡只留這麼久：夠算段速就好，省記憶體
     gapResetMin: 4,                  // 相鄰定位間隔超過這個就不算段速
     maxBinMin: 5,                    // 單一 0.2 km 分段最多算 5 分鐘
+    // 路況（公車實際跑多快，含靠站與紅燈）：等車頁「前方低速／停滯」與地圖上慢的路段用同一組門檻
+    slowKmh: 10,                     // 低於這個算低速
+    jamKmh: 5,                       // 低於這個算停滯
+    roadWinBins: 2,                  // 地圖上的路況：每個分段連同前後各 2 段（約 1 km）一起平均。單一分段有站、有紅燈本來就慢，不能單看
+    roadCoverMin: 0.6,               //   這 1 km 裡有量到的不到六成就不判斷（沒量到不等於順暢，也不畫）
+    roadFreshMin: 20,                //   只看這麼久以內有車經過的分段：地圖畫的是現在，半小時前的慢不算
   };
 
   // ---------------------------------------------------------------- 時間
@@ -799,21 +805,65 @@
    */
   function travelMin(ent, k0, k1, fallbackPace, nowMs) {
     if (k1 <= k0) return { min: 0, coverage: 1, borrowed: 0 };
-    const fresh = (x) => x && x.var != null;                  // 舊格式（升級前存在瀏覽器裡的）沒有 var：不用
     let min = 0, covered = 0, borrowed = 0;
     for (let b = Math.floor(k0 / P.binKm); b * P.binKm < k1; b++) {
       const s = Math.max(k0, b * P.binKm), e = Math.min(k1, (b + 1) * P.binKm), len = e - s;
-      let best = fresh(ent.bins[b]) ? { pace: paceNow(ent.bins[b], nowMs), at: ent.bins[b].at, own: true } : null;
-      for (const sh of ent.shared || []) {
-        const m = mapKm(sh.segs, (s + e) / 2);
-        if (!m) continue;
-        const ob = sh.ent.bins[Math.floor(m.km / P.binKm)];
-        if (fresh(ob) && (!best || ob.at > best.at)) best = { pace: paceNow(ob, nowMs) * m.ratio, at: ob.at, own: false };
-      }
+      const best = binPace(ent, b, (s + e) / 2, nowMs);
       if (best) { min += best.pace * len; covered += len; if (!best.own) borrowed += len; }
       else min += fallbackPace * len;
     }
     return { min, coverage: covered / (k1 - k0), borrowed: borrowed / (k1 - k0) };
+  }
+  /**
+   * 第 b 個分段現在的步調：本變體自己的，或共用路段另一邊的（k＝拿來對到另一邊的公里數），取最近有車經過的那一邊。
+   * 回傳 { pace 分／公里, at 最後有車經過的時刻, own 是不是本變體自己量的 }；兩邊都沒量到回傳 null。
+   */
+  function binPace(ent, b, k, nowMs) {
+    const fresh = (x) => x && x.var != null;                  // 舊格式（升級前存在瀏覽器裡的）沒有 var：不用
+    let best = fresh(ent.bins[b]) ? { pace: paceNow(ent.bins[b], nowMs), at: ent.bins[b].at, own: true } : null;
+    for (const sh of ent.shared || []) {
+      const m = mapKm(sh.segs, k);
+      if (!m) continue;
+      const ob = sh.ent.bins[Math.floor(m.km / P.binKm)];
+      if (fresh(ob) && (!best || ob.at > best.at)) best = { pace: paceNow(ob, nowMs) * m.ratio, at: ob.at, own: false };
+    }
+    return best;
+  }
+
+  /**
+   * 地圖上慢的路段（v3.19）：每個 0.2 km 分段連同前後各 roadWinBins 段（約 1 km）一起算平均時速，
+   * 不到 slowKmh 是低速、不到 jamKmh 是停滯；相鄰、同一級的分段併成一段。順暢的、沒量到的都不回傳（畫面上不畫）。
+   * 不單看一個分段：有站、有紅燈的那一段本來就慢——10/17（六）早上實測，多數分段 20 km/h 上下，零星夾著 8～10 的單一分段，
+   * 一段一段標的話整條路線都是假的慢點。
+   * 只用 roadFreshMin 分鐘內有車經過的分段（推算用的 paceNow 會把舊的慢慢退回預設車速，但地圖畫的是現在）；
+   * 1 km 裡有量到的不到 roadCoverMin 就不判斷。段速可借共用路段另一邊的（同 travelMin）。
+   * 回傳 [{ k0, k1, kmh, jam }]：沿這個變體的公里數；kmh＝這一段裡最慢的那個 1 km 平均。
+   */
+  function slowStretches(tracker, id, nowMs) {
+    const ent = entOf(tracker, id);
+    if (!ent) return [];
+    const B = P.binKm, L = ent.line.lengthKm, n = Math.ceil(L / B - 1e-9), W = P.roadWinBins;
+    const len = (b) => Math.min(B, L - b * B);
+    const pace = [];
+    for (let b = 0; b < n; b++) {
+      const x = binPace(ent, b, b * B + len(b) / 2, nowMs);
+      pace.push(x && nowMs - x.at <= P.roadFreshMin * 60e3 ? x.pace : null);
+    }
+    const out = [];
+    for (let j = 0; j < n; j++) {
+      let min = 0, km = 0, all = 0;
+      for (let i = Math.max(0, j - W); i <= Math.min(n - 1, j + W); i++) {
+        all += len(i);
+        if (pace[i] != null) { min += pace[i] * len(i); km += len(i); }
+      }
+      if (!(km > 0) || km / all < P.roadCoverMin) continue;
+      const kmh = km / (min / 60);
+      if (!(kmh < P.slowKmh)) continue;
+      const jam = kmh < P.jamKmh, k0 = j * B, k1 = j * B + len(j), last = out[out.length - 1];
+      if (last && last.jam === jam && Math.abs(last.k1 - k0) < 1e-9) { last.k1 = k1; last.kmh = Math.min(last.kmh, kmh); }
+      else out.push({ k0, k1, kmh, jam });
+    }
+    return out;
   }
 
   /**
@@ -1200,6 +1250,6 @@
   return { P, tpeParts, serviceDay, hhmmToMin, fmtTime, parseTpe, prepLine, project, parseBlobJson, indexEta, mergeEta, officialNext,
            distM, nearestPlatforms, nearestStops, searchRoutes, searchStops, splitStopName, stopGroups,
            compass8, headingDiff, bayNo, positions, positionBar, reachStops, nearStops, reachSummary, unitKey, carryOver, arrivalOrder, splitRouteName, pickColor, routeColors, rememberColors, helperRoutes, routeCompare,
-           tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, paceUpdate, paceNow, paceState, travelMin, roadAhead, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
+           tidOf, entOf, periodOf, defaultKmhAt, calibFor, createTracker, addVariants, sharedSegments, ingestBusData, activeBuses, paceUpdate, paceNow, paceState, travelMin, roadAhead, slowStretches, headwayNow, serviceEndMs, departuresToday, upcomingDepartures, lastDepartureToday, routeArrivals, mergeStops,
            calibGroup, isApprox, carKind, speedLabel, flapCells, earliestMs, upcomingForBus, rideEstimate, tweenKm, planTween };
 });

@@ -684,8 +684,9 @@ function startApp() {
       const v = byKey.get(e.key), x = C.roadAhead(tracker, v.tid, v.stops[e.si].km, now);
       if (x && (!best || x.coverage > best.coverage)) best = x;
     }
-    if (!best || best.coverage < 0.4 || best.kmh == null || best.kmh >= 10) return "";
-    return `・<span class="road ${best.kmh < 5 ? "jam" : "slow"}" title="公車在站牌前 2 km 實際跑的速度，含靠站與紅燈">前方${best.kmh < 5 ? "停滯" : "低速"} ${Math.round(best.kmh)} km/h</span>`;
+    if (!best || best.coverage < 0.4 || best.kmh == null || best.kmh >= C.P.slowKmh) return "";
+    const jam = best.kmh < C.P.jamKmh;
+    return `・<span class="road ${jam ? "jam" : "slow"}" title="公車在站牌前 2 km 實際跑的速度，含靠站與紅燈">前方${jam ? "停滯" : "低速"} ${Math.round(best.kmh)} km/h</span>`;
   }
   /**
    * 出門提醒：走到站牌要幾分，對上「最早可能到站」，告訴你現在該不該走。算的是現在看的那個候車位置；
@@ -1277,6 +1278,12 @@ function startApp() {
     if (map) { map.invalidateSize({ pan: false }); return; }
     map = L.map("map", { zoomControl: false });
     L.control.zoom({ position: "topright" }).addTo(map);
+    // 慢的路段（路況）：路線底下一圈紅光。低速、停滯各一層，透明度放在圖層上——兩條路線疊在同一條路上時紅光不會越疊越深
+    for (const [name, z, op] of [["roadSlow", 380, 0.45], ["roadJam", 381, 0.7]]) {
+      const pane = map.createPane(name);
+      pane.style.zIndex = z; pane.style.pointerEvents = "none"; pane.style.opacity = op;
+    }
+    roadLayer = L.layerGroup().addTo(map);
     const casing = map.createPane("casing");                    // 路線的深色邊：在底圖之上、所有路線與標記之下
     casing.style.zIndex = 390; casing.style.pointerEvents = "none";
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -1350,6 +1357,7 @@ function startApp() {
     }
     const on = shownOf(pv, pl);
     for (const v of V) setLayer(lines[v.key], on(v));
+    drawRoad(on, now);
     // 目前地點的站牌畫大一點（關注或地點有變才重設樣式）
     const hereSig = (pl ? pl.id : "") + "|" + watchRev + "|" + pv.poles.length, here = new Set(pv.poles.map((p) => p.id));
     for (const { hit, dot, st } of stMarkers.values()) {
@@ -1402,6 +1410,23 @@ function startApp() {
     renderSheet(pv, pl, now);
     const open = state.openStation && stMarkers.get(state.openStation);
     if (open) open.hit.setPopupContent(stationPopupHTML(open.st));
+  }
+  /**
+   * 慢的路段（核心 slowStretches）：只畫地圖上現在畫著的路線；順暢與沒量到的不畫。量到的是公車跑多快（含靠站與紅燈），
+   * 所以和等車頁一樣只說慢，不說塞車。沒有變就不重畫（每次資料更新都會叫到這裡）。
+   */
+  let roadLayer = null, roadSig = "";
+  function drawRoad(on, now) {
+    const segs = [];
+    for (const v of V) if (on(v)) for (const s of C.slowStretches(tracker, v.tid, now)) segs.push({ v, ...s });
+    const sig = segs.map((s) => `${s.v.key}:${s.k0.toFixed(1)}-${s.k1.toFixed(2)}${s.jam ? "!" : ""}`).join("|");
+    if (sig === roadSig) return;
+    roadSig = sig;
+    roadLayer.clearLayers();
+    for (const s of segs) {
+      const pts = sliceShape(s.v, s.k0, s.k1);
+      if (pts.length > 1) roadLayer.addLayer(L.polyline(pts, { pane: s.jam ? "roadJam" : "roadSlow", color: s.jam ? "#ff3b30" : "#ff6b66", weight: s.jam ? 17 : 14, opacity: 1, lineCap: "round", interactive: false }));
+    }
   }
   let adhocPopup = null;
   function openStationOnMap(key) {
